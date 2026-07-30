@@ -1,10 +1,8 @@
-import { createApp, createRoute, z } from "@clawnify/app";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { query, get, run } from "./db.js";
 import { putUpload, getUpload } from "./uploads.js";
 
-type Env = { Bindings: { DB: D1Database } };
-
-const app = createApp<Env>({ title: "Design App API", version: "1.0.0" });
+const app = new OpenAPIHono();
 
 // ── Schemas ──────────────────────────────────────────────────────────
 

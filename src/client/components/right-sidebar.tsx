@@ -28,8 +28,16 @@ const FONT_FAMILIES = [
 ];
 
 export function RightSidebar() {
-  const { selectedObject, updateSelectedObject, deleteSelected, canvas, setBackground, canvasWidth, canvasHeight } =
-    useEditor();
+  const {
+    selectedObject,
+    updateSelectedObject,
+    toggleBold,
+    deleteSelected,
+    canvas,
+    setBackground,
+    canvasWidth,
+    canvasHeight,
+  } = useEditor();
 
   const isText = selectedObject instanceof fabric.Textbox || selectedObject instanceof fabric.IText;
   const isImage = selectedObject instanceof fabric.FabricImage;
@@ -135,14 +143,9 @@ export function RightSidebar() {
                       ? "bg-accent/20 border-accent text-accent"
                       : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
                   }`}
-                  onClick={() =>
-                    updateSelectedObject({
-                      fontWeight:
-                        (selectedObject as any).fontWeight === "700" || (selectedObject as any).fontWeight === "bold"
-                          ? "400"
-                          : "700",
-                    })
-                  }
+                  title="Bold — applies to the selected characters while editing text, or the whole box otherwise"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={toggleBold}
                 >
                   <Bold size={14} />
                 </button>

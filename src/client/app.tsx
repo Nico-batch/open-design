@@ -4,33 +4,12 @@ import { useDesigns } from "./hooks/use-designs";
 import { useRouter } from "./hooks/use-router";
 import { Editor } from "./components/editor";
 import { Home } from "./components/home";
-import WebFont from "webfontloader";
 import { useEffect } from "preact/hooks";
 
 export function App() {
   const { path, navigate, designId } = useRouter();
   const canvasState = useCanvasState();
   const designState = useDesigns(canvasState.getCanvasJSONForPage);
-
-  // Load Google Fonts
-  useEffect(() => {
-    WebFont.load({
-      google: {
-        families: [
-          "Inter:400,500,600,700",
-          "Playfair Display:400,500,600,700,800,900",
-          "Montserrat:400,500,600,700,800,900",
-          "Poppins:400,500,600,700",
-          "Roboto:400,500,700",
-          "Open Sans:400,600,700",
-          "Lora:400,700",
-          "Raleway:400,500,600",
-          "Source Sans Pro:400,600,700",
-          "Merriweather:400,700",
-        ],
-      },
-    });
-  }, []);
 
   // Load design from URL on initial load and when designId changes
   useEffect(() => {

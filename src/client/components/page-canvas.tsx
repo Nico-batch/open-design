@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
+import { applyLogoToCanvas } from "../lib/logo";
 import type { Page } from "../types";
 
 interface PageCanvasProps {
@@ -130,13 +131,18 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       if (e.target) applyCustomControls(e.target);
     });
 
-    // Load page content
+    // Load page content, then add the fixed logo layer on top
     if (page.canvas_json && page.canvas_json !== "{}") {
       try {
-        c.loadFromJSON(JSON.parse(page.canvas_json)).then(() => c.requestRenderAll());
+        c.loadFromJSON(JSON.parse(page.canvas_json)).then(async () => {
+          await applyLogoToCanvas(c, width, height);
+          c.requestRenderAll();
+        });
       } catch {
         // ignore parse errors
       }
+    } else {
+      applyLogoToCanvas(c, width, height).then(() => c.requestRenderAll());
     }
 
     // On mouse down, activate this canvas (use ref to avoid stale closure)

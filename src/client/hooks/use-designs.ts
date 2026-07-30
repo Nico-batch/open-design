@@ -66,6 +66,17 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     }
   }, [getCanvasJSONForPage, pages]);
 
+  // Creating a design only returns the design row (no pages, even though the server
+  // auto-creates "Page 1"). Fetch the full record so `pages`/`activePageId` are populated
+  // before the editor mounts — otherwise the new design opens with no visible canvas.
+  const activateCreatedDesign = useCallback(async (id: string) => {
+    activeIdRef.current = id;
+    const full = await api<DesignWithPages>("GET", `/api/designs/${id}`);
+    setActiveDesign(full);
+    setPages(full.pages);
+    setActivePageId(full.pages[0]?.id ?? null);
+  }, []);
+
   const createDesign = useCallback(async (): Promise<string | undefined> => {
     try {
       const d = await api<Design>("POST", "/api/designs", {
@@ -73,13 +84,12 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
         canvas_json: "{}",
       });
       setDesigns((prev) => [d, ...prev]);
-      setActiveDesign(d);
-      activeIdRef.current = d.id;
+      await activateCreatedDesign(d.id);
       return d.id;
     } catch (e) {
       console.error("Failed to create design:", e);
     }
-  }, []);
+  }, [activateCreatedDesign]);
 
   const createFromTemplate = useCallback(async (template: Template): Promise<string | undefined> => {
     try {
@@ -90,11 +100,12 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
         height: template.height,
       });
       setDesigns((prev) => [d, ...prev]);
+      await activateCreatedDesign(d.id);
       return d.id;
     } catch (e) {
       console.error("Failed to create from template:", e);
     }
-  }, []);
+  }, [activateCreatedDesign]);
 
   const loadDesign = useCallback(
     async (id: string) => {

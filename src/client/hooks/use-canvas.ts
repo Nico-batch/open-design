@@ -1,8 +1,17 @@
 import { useState, useCallback, useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import type { Template } from "../types";
+import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
 
 const MAX_HISTORY = 50;
+
+// A plain `{ ...obj }` spread drops the prototype, so `instanceof fabric.Textbox` (used
+// by right-sidebar.tsx to pick which properties panel to show) breaks on the very next
+// render. This clones enough to give Preact a new reference (so the state update isn't
+// bailed out) while keeping the object `instanceof`-correct.
+function cloneWithPrototype<T extends object>(obj: T): T {
+  return Object.assign(Object.create(Object.getPrototypeOf(obj)), obj);
+}
 
 const TEXT_PRESETS = {
   heading: { text: "Add a heading", fontSize: 48, fontWeight: "700", fontFamily: "Montserrat" },
@@ -60,7 +69,7 @@ export function useCanvasState() {
     if (isRestoringRef.current.has(pageId)) return;
     const canvas = canvasMapRef.current.get(pageId);
     if (!canvas) return;
-    const json = JSON.stringify(canvas.toJSON());
+    const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
     let hist = historyMapRef.current.get(pageId);
     if (!hist) {
       hist = { entries: [], index: -1 };
@@ -97,14 +106,23 @@ export function useCanvasState() {
       }
     });
 
-    // History events
-    canvas.on("object:added", () => saveHistory(pageId));
-    canvas.on("object:modified", () => saveHistory(pageId));
-    canvas.on("object:removed", () => saveHistory(pageId));
+    // History events — the logo layer is added/removed/repositioned programmatically
+    // (see lib/logo.ts) and must never itself trigger a history save: besides being
+    // noise in undo/redo, withoutLogo()'s own remove/add would otherwise re-enter
+    // saveHistory (which calls withoutLogo) and blow the call stack.
+    canvas.on("object:added", (e) => {
+      if (!isLogoObject(e.target)) saveHistory(pageId);
+    });
+    canvas.on("object:modified", (e) => {
+      if (!isLogoObject(e.target)) saveHistory(pageId);
+    });
+    canvas.on("object:removed", (e) => {
+      if (!isLogoObject(e.target)) saveHistory(pageId);
+    });
 
     // Initial history snapshot
     setTimeout(() => {
-      const json = JSON.stringify(canvas.toJSON());
+      const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
       historyMapRef.current.set(pageId, { entries: [json], index: 0 });
       updateUndoRedoState(pageId);
     }, 100);
@@ -246,8 +264,28 @@ export function useCanvasState() {
 
   // ── Background ──────────────────────────────────────────────────────
 
+  // Scales+centers a background image to fill (cover) or fit inside (contain) the
+  // canvas, instead of the old independent scaleX/scaleY stretch.
+  const fitBackgroundImage = (
+    img: fabric.FabricImage,
+    width: number,
+    height: number,
+    fit: "cover" | "contain"
+  ) => {
+    const imgWidth = img.width || 1;
+    const imgHeight = img.height || 1;
+    const scale =
+      fit === "cover" ? Math.max(width / imgWidth, height / imgHeight) : Math.min(width / imgWidth, height / imgHeight);
+    img.set({
+      scaleX: scale,
+      scaleY: scale,
+      left: (width - imgWidth * scale) / 2,
+      top: (height - imgHeight * scale) / 2,
+    });
+  };
+
   const setBackground = useCallback(
-    (type: "color" | "gradient" | "image", value: string) => {
+    (type: "color" | "gradient" | "image", value: string, fit: "cover" | "contain" = "cover") => {
       const canvas = getActiveCanvas();
       const pageId = activeCanvasIdRef.current;
       if (!canvas || !pageId) return;
@@ -257,19 +295,35 @@ export function useCanvasState() {
         saveHistory(pageId);
       } else if (type === "image") {
         fabric.FabricImage.fromURL(value, { crossOrigin: "anonymous" }).then((img) => {
-          const scaleX = canvasWidth / (img.width || 1);
-          const scaleY = canvasHeight / (img.height || 1);
-          img.set({ left: 0, top: 0, scaleX, scaleY, selectable: false, evented: false });
+          fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
+          img.set({ selectable: false, evented: false });
           const objects = canvas.getObjects();
           const bgObj = objects.find((o) => (o as any)._isBgImage);
           if (bgObj) canvas.remove(bgObj);
           (img as any)._isBgImage = true;
+          (img as any)._bgFit = fit;
           canvas.add(img);
           canvas.sendObjectToBack(img);
           canvas.requestRenderAll();
           saveHistory(pageId);
         });
       }
+    },
+    [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
+  );
+
+  // Re-fits the current background image (if any) without re-uploading it.
+  const setBackgroundImageFit = useCallback(
+    (fit: "cover" | "contain") => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      const bgObj = canvas.getObjects().find((o) => (o as any)._isBgImage) as fabric.FabricImage | undefined;
+      if (!bgObj) return;
+      fitBackgroundImage(bgObj, canvasWidth, canvasHeight, fit);
+      (bgObj as any)._bgFit = fit;
+      canvas.requestRenderAll();
+      saveHistory(pageId);
     },
     [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
   );
@@ -284,10 +338,38 @@ export function useCanvasState() {
       selectedObject.set(props as Partial<fabric.FabricObject>);
       canvas.requestRenderAll();
       saveHistory(pageId);
-      setSelectedObject({ ...selectedObject } as fabric.FabricObject);
+      setSelectedObject(cloneWithPrototype(selectedObject));
     },
     [getActiveCanvas, selectedObject, saveHistory]
   );
+
+  // Toggles bold. If the object is being edited with a text range selected, applies
+  // per-character styles to just that range (Fabric's setSelectionStyles); otherwise
+  // toggles the whole object's fontWeight, same as the other text properties.
+  const toggleBold = useCallback(() => {
+    const canvas = getActiveCanvas();
+    const pageId = activeCanvasIdRef.current;
+    if (!canvas || !pageId || !selectedObject) return;
+    if (!(selectedObject instanceof fabric.Textbox || selectedObject instanceof fabric.IText)) return;
+    const obj = selectedObject as fabric.IText;
+
+    const start = obj.selectionStart;
+    const end = obj.selectionEnd;
+    const hasRangeSelected = obj.isEditing && typeof start === "number" && typeof end === "number" && start !== end;
+
+    if (hasRangeSelected) {
+      const styles = obj.getSelectionStyles(start, end, true);
+      const allBold = styles.length > 0 && styles.every((s) => s.fontWeight === "700" || s.fontWeight === 700);
+      obj.setSelectionStyles({ fontWeight: allBold ? "400" : "700" }, start, end);
+      obj.initDimensions?.();
+    } else {
+      const isBold = (obj as any).fontWeight === "700" || (obj as any).fontWeight === "bold";
+      obj.set({ fontWeight: isBold ? "400" : "700" } as any);
+    }
+    canvas.requestRenderAll();
+    saveHistory(pageId);
+    setSelectedObject(cloneWithPrototype(obj as fabric.FabricObject));
+  }, [getActiveCanvas, selectedObject, saveHistory]);
 
   const deleteSelected = useCallback(() => {
     const canvas = getActiveCanvas();
@@ -311,13 +393,14 @@ export function useCanvasState() {
       isRestoringRef.current.add(pageId);
       hist.index = index;
       const json = hist.entries[index];
-      canvas.loadFromJSON(JSON.parse(json)).then(() => {
+      canvas.loadFromJSON(JSON.parse(json)).then(async () => {
+        await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
         canvas.requestRenderAll();
         isRestoringRef.current.delete(pageId);
         updateUndoRedoState(pageId);
       });
     },
-    [getActiveCanvas, updateUndoRedoState]
+    [getActiveCanvas, updateUndoRedoState, canvasWidth, canvasHeight]
   );
 
   const undo = useCallback(() => {
@@ -348,6 +431,7 @@ export function useCanvasState() {
         canvas.setDimensions({ width: width * dpr, height: height * dpr }, { cssOnly: false });
         canvas.setDimensions({ width, height }, { cssOnly: true });
         canvas.setViewportTransform([dpr, 0, 0, dpr, 0, 0]);
+        applyLogoToCanvas(canvas, width, height);
         canvas.requestRenderAll();
       }
     },
@@ -399,13 +483,13 @@ export function useCanvasState() {
   const getCanvasJSON = useCallback(() => {
     const canvas = getActiveCanvas();
     if (!canvas) return "{}";
-    return JSON.stringify(canvas.toJSON());
+    return withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
   }, [getActiveCanvas]);
 
   const getCanvasJSONForPage = useCallback((pageId: string) => {
     const canvas = canvasMapRef.current.get(pageId);
     if (!canvas) return "{}";
-    return JSON.stringify(canvas.toJSON());
+    return withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
   }, []);
 
   const loadTemplate = useCallback(
@@ -427,11 +511,12 @@ export function useCanvasState() {
       const pageId = activeCanvasIdRef.current;
       if (canvas && pageId) {
         isRestoringRef.current.add(pageId);
-        canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(() => {
+        canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
+          await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();
           isRestoringRef.current.delete(pageId);
           historyMapRef.current.set(pageId, {
-            entries: [JSON.stringify(canvas.toJSON())],
+            entries: [withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()))],
             index: 0,
           });
           updateUndoRedoState(pageId);
@@ -490,7 +575,9 @@ export function useCanvasState() {
     addShape,
     addImage,
     setBackground,
+    setBackgroundImageFit,
     updateSelectedObject,
+    toggleBold,
     deleteSelected,
     undo,
     redo,

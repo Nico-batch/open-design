@@ -10,9 +10,8 @@ export interface CanvasSize {
 }
 
 export const CANVAS_SIZES: CanvasSize[] = [
-  { label: "LinkedIn Square", width: 1080, height: 1080 },
-  { label: "LinkedIn Landscape", width: 1200, height: 627 },
-  { label: "LinkedIn Portrait", width: 1200, height: 1500 },
+  { label: "Instagram Feed (Square)", width: 1080, height: 1080 },
+  { label: "Instagram Feed (Portrait)", width: 1080, height: 1350 },
   { label: "Instagram Story", width: 1080, height: 1920 },
 ];
 
@@ -35,8 +34,10 @@ export interface EditorContextValue {
   addText: (preset: "heading" | "subheading" | "body") => void;
   addShape: (type: "rect" | "circle" | "line" | "triangle") => void;
   addImage: (url: string) => void;
-  setBackground: (type: "color" | "gradient" | "image", value: string) => void;
+  setBackground: (type: "color" | "gradient" | "image", value: string, fit?: "cover" | "contain") => void;
+  setBackgroundImageFit: (fit: "cover" | "contain") => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
+  toggleBold: () => void;
   deleteSelected: () => void;
   undo: () => void;
   redo: () => void;
@@ -69,7 +70,7 @@ export interface EditorContextValue {
   pages: Page[];
   activePageId: string | null;
   activePage: Page | null;
-  addPage: () => Promise<void>;
+  addPage: (afterPageId?: string) => Promise<void>;
   duplicatePage: (pageId: string) => Promise<void>;
   deletePage: (pageId: string) => Promise<void>;
   renamePage: (pageId: string, title: string) => Promise<void>;

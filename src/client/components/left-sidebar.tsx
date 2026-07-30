@@ -52,9 +52,11 @@ const BG_COLORS = [
 ];
 
 export function LeftSidebar() {
-  const { addText, addShape, addImage, setBackground, templates, loadTemplate } = useEditor();
+  const { addText, addShape, addImage, setBackground, setBackgroundImageFit, templates, loadTemplate } =
+    useEditor();
   const [activeSection, setActiveSection] = useState<Section | null>("templates");
   const [uploading, setUploading] = useState(false);
+  const [bgFit, setBgFit] = useState<"cover" | "contain">("cover");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
 
@@ -91,12 +93,12 @@ export function LeftSidebar() {
       try {
         const resp = await fetch("/api/uploads", { method: "POST", body: form });
         const data = await resp.json();
-        if (data.url) setBackground("image", data.url);
+        if (data.url) setBackground("image", data.url, bgFit);
       } catch (e) {
         console.error("Bg upload failed:", e);
       }
     },
-    [setBackground]
+    [setBackground, bgFit]
   );
 
   const handleDrop = useCallback(
@@ -281,6 +283,24 @@ export function LeftSidebar() {
                     </div>
 
                     <p class="text-zinc-400 text-[11px] mb-2">Background image</p>
+                    <div class="flex gap-1.5 mb-2">
+                      {(["cover", "contain"] as const).map((f) => (
+                        <button
+                          key={f}
+                          class={`flex-1 py-1 rounded-md border text-[11px] capitalize cursor-pointer transition-all ${
+                            bgFit === f
+                              ? "bg-accent/20 border-accent text-accent"
+                              : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                          }`}
+                          onClick={() => {
+                            setBgFit(f);
+                            setBackgroundImageFit(f);
+                          }}
+                        >
+                          {f}
+                        </button>
+                      ))}
+                    </div>
                     <button
                       class="w-full p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer text-xs text-zinc-400 hover:border-accent hover:text-zinc-800 transition-all"
                       onClick={() => bgFileRef.current?.click()}
