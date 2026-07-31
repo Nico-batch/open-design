@@ -18,5 +18,8 @@ export function useRouter() {
   const match = path.match(/^\/design\/([^/]+)$/);
   const designId = match ? match[1] : null;
 
-  return { path, navigate, designId };
+  // ?recordId=<uuid> — entry point from Twenty (any path, e.g. /edit?recordId=...)
+  const recordId = new URLSearchParams(window.location.search).get("recordId");
+
+  return { path, navigate, designId, recordId };
 }

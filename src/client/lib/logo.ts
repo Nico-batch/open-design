@@ -1,7 +1,8 @@
 import * as fabric from "fabric";
 
-// Placeholder asset — swap for the real brand logo (see CLAUDE.md) and update this path.
-export const LOGO_URL = "/logo-placeholder.svg";
+// Brand logo (faro/lighthouse, blanco sobre negro, 1024x1024). To replace, drop the new
+// file at public/logo.jpg (or update this path) — no other changes needed.
+export const LOGO_URL = "/logo.jpg";
 
 const MAX_WIDTH_RATIO = 0.18;
 const MAX_WIDTH_PX = 220;

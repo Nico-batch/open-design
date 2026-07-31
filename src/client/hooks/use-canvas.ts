@@ -155,11 +155,11 @@ export function useCanvasState() {
   // ── Text ────────────────────────────────────────────────────────────
 
   const addText = useCallback(
-    (preset: "heading" | "subheading" | "body") => {
+    (preset: "heading" | "subheading" | "body", customText?: string) => {
       const canvas = getActiveCanvas();
       if (!canvas) return;
       const cfg = TEXT_PRESETS[preset];
-      const text = new fabric.Textbox(cfg.text, {
+      const text = new fabric.Textbox(customText || cfg.text, {
         left: canvasWidth / 2 - 200,
         top: canvasHeight / 2 - 30,
         width: 400,
@@ -454,29 +454,41 @@ export function useCanvasState() {
 
   // ── Export ──────────────────────────────────────────────────────────
 
-  const exportPNG = useCallback(() => {
-    const canvas = getActiveCanvas();
-    if (!canvas) return;
-    const activeObj = canvas.getActiveObject();
-    canvas.discardActiveObject();
-    canvas.requestRenderAll();
-
-    const dataURL = canvas.toDataURL({
-      format: "png",
-      multiplier: 2,
-      quality: 1,
-    });
-
-    const link = document.createElement("a");
-    link.download = "design.png";
-    link.href = dataURL;
-    link.click();
-
-    if (activeObj) {
-      canvas.setActiveObject(activeObj);
+  const withExportDataURL = useCallback(
+    <T,>(fn: (dataURL: string) => T): T | undefined => {
+      const canvas = getActiveCanvas();
+      if (!canvas) return undefined;
+      const activeObj = canvas.getActiveObject();
+      canvas.discardActiveObject();
       canvas.requestRenderAll();
-    }
-  }, [getActiveCanvas]);
+
+      const dataURL = canvas.toDataURL({ format: "png", multiplier: 2, quality: 1 });
+      const result = fn(dataURL);
+
+      if (activeObj) {
+        canvas.setActiveObject(activeObj);
+        canvas.requestRenderAll();
+      }
+      return result;
+    },
+    [getActiveCanvas]
+  );
+
+  const exportPNG = useCallback(() => {
+    withExportDataURL((dataURL) => {
+      const link = document.createElement("a");
+      link.download = "design.png";
+      link.href = dataURL;
+      link.click();
+    });
+  }, [withExportDataURL]);
+
+  const exportPNGBlob = useCallback(async (): Promise<Blob | null> => {
+    const dataURL = withExportDataURL((d) => d);
+    if (!dataURL) return null;
+    const res = await fetch(dataURL);
+    return res.blob();
+  }, [withExportDataURL]);
 
   // ── Serialization ───────────────────────────────────────────────────
 
@@ -588,6 +600,7 @@ export function useCanvasState() {
     zoomIn,
     zoomOut,
     exportPNG,
+    exportPNGBlob,
     getCanvasJSON,
     getCanvasJSONForPage,
     loadTemplate,

@@ -5,9 +5,13 @@ CREATE TABLE IF NOT EXISTS designs (
   width INTEGER DEFAULT 1080,
   height INTEGER DEFAULT 1080,
   thumbnail_url TEXT,
+  twenty_record_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_designs_twenty_record ON designs(twenty_record_id)
+  WHERE twenty_record_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS templates (
   id TEXT PRIMARY KEY,

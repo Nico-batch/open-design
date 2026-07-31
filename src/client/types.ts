@@ -5,8 +5,15 @@ export interface Design {
   width: number;
   height: number;
   thumbnail_url: string | null;
+  twenty_record_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface NewsRecord {
+  id: string;
+  title: string | null;
+  imageUrl: string | null;
 }
 
 export interface Page {

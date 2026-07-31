@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { query, get, run } from "./db.js";
 import { putUpload, getUpload } from "./uploads.js";
+import { fetchNews, setNewsEditedImage } from "./twenty.js";
 
 const app = new OpenAPIHono();
 
@@ -13,6 +14,7 @@ const DesignSchema = z.object({
   width: z.number(),
   height: z.number(),
   thumbnail_url: z.string().nullable(),
+  twenty_record_id: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -374,6 +376,122 @@ app.get("/api/uploads/:filename", async (c) => {
   return new Response(result.data, {
     headers: { "Content-Type": result.contentType, "Cache-Control": "public, max-age=31536000" },
   });
+});
+
+// ── Twenty integration ──────────────────────────────────────────────
+//
+// GET /api/news/:id            — datos por defecto (título + URL de imagen propia,
+//                                 esta última siempre vía nuestro proxy: nunca se manda
+//                                 al cliente la URL firmada de Twenty).
+// GET /api/news/:id/image      — proxy de los bytes de la imagen de origen (evita
+//                                 tainted canvas y no expone el token firmado de Twenty).
+// POST /api/news/:id/publish-image — recibe el PNG exportado, lo guarda como upload
+//                                 público y escribe esa URL en el campo "Imagen
+//                                 Editada" (Links) de la noticia. No publica en redes;
+//                                 eso lo hace otro flujo fuera de este editor.
+
+app.get("/api/news/:id", async (c) => {
+  const { id } = c.req.param();
+  try {
+    const news = await fetchNews(id);
+    if (!news) return c.json({ error: "Not found" }, 404);
+    return c.json(
+      {
+        id: news.id,
+        title: news.title,
+        imageUrl: news.imageUrl ? `/api/news/${id}/image` : null,
+      },
+      200
+    );
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Twenty fetch failed" }, 502);
+  }
+});
+
+app.get("/api/news/:id/image", async (c) => {
+  const { id } = c.req.param();
+  try {
+    const news = await fetchNews(id);
+    if (!news?.imageUrl) return c.json({ error: "Not found" }, 404);
+    const upstream = await fetch(news.imageUrl);
+    if (!upstream.ok || !upstream.body) return c.json({ error: "Upstream fetch failed" }, 502);
+    return new Response(upstream.body, {
+      headers: {
+        "Content-Type": upstream.headers.get("content-type") || "image/jpeg",
+        "Cache-Control": "private, max-age=300",
+      },
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Twenty fetch failed" }, 502);
+  }
+});
+
+app.post("/api/designs/from-news/:newsId", async (c) => {
+  const { newsId } = c.req.param();
+  const existing = await get<z.infer<typeof DesignSchema>>(
+    "SELECT * FROM designs WHERE twenty_record_id = ?",
+    [newsId]
+  );
+  if (existing) {
+    const pages = await query<z.infer<typeof PageSchema>>(
+      "SELECT * FROM pages WHERE design_id = ? ORDER BY sort_order",
+      [existing.id]
+    );
+    return c.json({ ...existing, pages }, 200);
+  }
+
+  let name = "Untitled Design";
+  try {
+    const news = await fetchNews(newsId);
+    if (news?.title) name = news.title.slice(0, 120);
+  } catch {
+    // best effort — fall back to the default name
+  }
+
+  await run(
+    "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id) VALUES (?, ?, ?, ?, ?)",
+    [name, "{}", 1080, 1080, newsId]
+  );
+  const row = await get<z.infer<typeof DesignSchema>>(
+    "SELECT * FROM designs WHERE twenty_record_id = ?",
+    [newsId]
+  );
+  await run(
+    "INSERT INTO pages (design_id, title, canvas_json, sort_order) VALUES (?, ?, ?, ?)",
+    [row!.id, "Page 1", "{}", 0]
+  );
+  const pages = await query<z.infer<typeof PageSchema>>(
+    "SELECT * FROM pages WHERE design_id = ? ORDER BY sort_order",
+    [row!.id]
+  );
+  return c.json({ ...row!, pages }, 200);
+});
+
+app.post("/api/news/:id/publish-image", async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.parseBody();
+  const file = body["file"];
+  if (!file || typeof file === "string") {
+    return c.json({ error: "No file provided" }, 400);
+  }
+
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
+  if (!publicBaseUrl) {
+    return c.json({ error: "PUBLIC_BASE_URL no configurado en el servidor" }, 500);
+  }
+
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+  const data = await file.arrayBuffer();
+  const relativeUrl = await putUpload(filename, data, "image/png");
+  const publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
+
+  try {
+    await setNewsEditedImage(id, publicUrl, "Imagen editada (Open Design)");
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Twenty update failed" }, 502);
+  }
+
+  return c.json({ url: publicUrl }, 200);
 });
 
 export default app;

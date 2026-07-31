@@ -66,6 +66,23 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     }
   }, [getCanvasJSONForPage, pages]);
 
+  // Uploads the exported PNG and writes its public URL into the linked News record's
+  // "Imagen Editada" field in Twenty. Does not save the design or publish to social
+  // media — those are separate, unrelated steps.
+  const publishToTwenty = useCallback(
+    async (pngBlob: Blob): Promise<string | undefined> => {
+      const recordId = activeDesign?.twenty_record_id;
+      if (!recordId) throw new Error("Este diseño no está vinculado a una noticia de Twenty");
+      const form = new FormData();
+      form.append("file", pngBlob, "design.png");
+      const resp = await fetch(`/api/news/${recordId}/publish-image`, { method: "POST", body: form });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "No se pudo publicar en Twenty");
+      return data.url as string;
+    },
+    [activeDesign]
+  );
+
   // Creating a design only returns the design row (no pages, even though the server
   // auto-creates "Page 1"). Fetch the full record so `pages`/`activePageId` are populated
   // before the editor mounts — otherwise the new design opens with no visible canvas.
@@ -90,6 +107,22 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
       console.error("Failed to create design:", e);
     }
   }, [activateCreatedDesign]);
+
+  // Entry point from Twenty (?recordId=...). Finds the design already linked to this
+  // News record, or creates one — same "News" record always resumes the same draft.
+  const openFromNewsRecord = useCallback(async (recordId: string): Promise<string | undefined> => {
+    try {
+      const full = await api<DesignWithPages>("POST", `/api/designs/from-news/${recordId}`);
+      setDesigns((prev) => (prev.some((d) => d.id === full.id) ? prev : [full, ...prev]));
+      activeIdRef.current = full.id;
+      setActiveDesign(full);
+      setPages(full.pages);
+      setActivePageId(full.pages[0]?.id ?? null);
+      return full.id;
+    } catch (e) {
+      console.error("Failed to open design from News record:", e);
+    }
+  }, []);
 
   const createFromTemplate = useCallback(async (template: Template): Promise<string | undefined> => {
     try {
@@ -243,8 +276,10 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     saving,
     createDesign,
     createFromTemplate,
+    openFromNewsRecord,
     loadDesign,
     saveDesign,
+    publishToTwenty,
     deleteDesign,
     renameDesign,
     scheduleSave,

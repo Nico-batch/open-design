@@ -7,6 +7,7 @@ import {
   Maximize,
   Download,
   Save,
+  Send,
   ChevronDown,
   Home,
 } from "lucide-preact";
@@ -27,7 +28,9 @@ export function Toolbar() {
     zoomIn,
     zoomOut,
     exportPNG,
+    exportPNGBlob,
     saveDesign,
+    publishToTwenty,
     saving,
     activeDesign,
     renameDesign,
@@ -37,6 +40,22 @@ export function Toolbar() {
   const [showSizeDropdown, setShowSizeDropdown] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  const handlePublish = async () => {
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const blob = await exportPNGBlob();
+      if (!blob) throw new Error("No se pudo exportar el PNG");
+      await publishToTwenty(blob);
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : "Error al publicar en Twenty");
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   const currentSize = CANVAS_SIZES.find(
     (s) => s.width === canvasWidth && s.height === canvasHeight
@@ -57,7 +76,7 @@ export function Toolbar() {
   };
 
   return (
-    <div class="flex items-center justify-between px-3 py-1.5 bg-white border-b border-zinc-200 shrink-0">
+    <div class="relative flex items-center justify-between px-3 py-1.5 bg-white border-b border-zinc-200 shrink-0">
       {/* Left: Home + Design name + Canvas size */}
       <div class="flex items-center gap-3">
         <button
@@ -192,7 +211,23 @@ export function Toolbar() {
           {saving ? <span class="spinner !border-white/30 !border-t-white" /> : <Save size={13} />}
           {saving ? "Saving..." : "Save"}
         </button>
+        {activeDesign?.twenty_record_id && (
+          <button
+            class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-md text-[11px] font-semibold border-none cursor-pointer transition-all bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+            onClick={handlePublish}
+            disabled={publishing}
+            title="Sube el PNG exportado y actualiza el campo Imagen Editada en Twenty (no publica en redes)"
+          >
+            {publishing ? <span class="spinner !border-white/30 !border-t-white" /> : <Send size={13} />}
+            {publishing ? "Enviando..." : "Guardar en Twenty"}
+          </button>
+        )}
       </div>
+      {publishError && (
+        <div class="absolute top-full right-3 mt-1 px-2.5 py-1.5 rounded-md bg-red-50 border border-red-200 text-[11px] text-red-700 shadow-md z-30">
+          {publishError}
+        </div>
+      )}
     </div>
   );
 }

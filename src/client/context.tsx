@@ -31,7 +31,7 @@ export interface EditorContextValue {
   setFitScale: (s: number) => void;
 
   // Canvas actions
-  addText: (preset: "heading" | "subheading" | "body") => void;
+  addText: (preset: "heading" | "subheading" | "body", customText?: string) => void;
   addShape: (type: "rect" | "circle" | "line" | "triangle") => void;
   addImage: (url: string) => void;
   setBackground: (type: "color" | "gradient" | "image", value: string, fit?: "cover" | "contain") => void;
@@ -48,6 +48,7 @@ export interface EditorContextValue {
   zoomIn: () => void;
   zoomOut: () => void;
   exportPNG: () => void;
+  exportPNGBlob: () => Promise<Blob | null>;
   getCanvasJSON: () => string;
   getCanvasJSONForPage: (pageId: string) => string;
   loadTemplate: (template: Template) => void;
@@ -62,6 +63,7 @@ export interface EditorContextValue {
   createFromTemplate: (template: Template) => Promise<string | undefined>;
   loadDesign: (id: string) => Promise<void>;
   saveDesign: () => Promise<void>;
+  publishToTwenty: (pngBlob: Blob) => Promise<string | undefined>;
   deleteDesign: (id: string) => Promise<void>;
   renameDesign: (id: string, name: string) => Promise<void>;
   saving: boolean;
