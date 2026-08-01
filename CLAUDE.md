@@ -254,10 +254,13 @@ otros archivos personales sueltos, no solo el logo).
 
 **Fase 4 completa por el lado del repo** (`Dockerfile` + `.dockerignore`, ver §11) —
 build y arranque verificados localmente con `docker build`/`docker run` (auth, health
-check, usuario no-root, persistencia en `/data`, todo probado, no solo leído). Falta la
-parte que solo se puede hacer con acceso real al panel de Dokploy: crear la Application,
-pegar las env vars, montar el volumen, poner el dominio + middleware de Traefik — nada de
-eso es código de este repo, son pasos manuales del usuario en su infraestructura.
+check, usuario no-root, persistencia en `/data`, todo probado, no solo leído). El Basic
+Auth de la app (Fase 3) se amplió durante esta fase a **toda** la app, no solo `/api/*`
+(ver §10.1) — al ser el único requisito real de acceso, el middleware de Traefik queda
+como opcional (§11.4), simplificando lo que hay que tocar en el panel de Dokploy. Falta
+la parte que solo se puede hacer con acceso real a ese panel: crear la Application, pegar
+las env vars, montar el volumen, poner el dominio — nada de eso es código de este repo,
+son pasos manuales del usuario en su infraestructura.
 
 **Sin decidir todavía (activos reales, no solo código):**
 - Fuentes de marca definitivas — hoy autoalojadas las mismas 10 familias que traía el
@@ -387,40 +390,60 @@ Dokploy). Todo lo de abajo está en [`src/server/index.ts`](src/server/index.ts)
 [`src/server/auth.ts`](src/server/auth.ts) (nuevo), verificado con `curl` contra el
 servidor real (no solo lectura de código).
 
-### 10.1 Auth en `/api/*`
+### 10.1 Auth en toda la app (no solo `/api/*`)
 
 `src/server/auth.ts` expone `editorAuth()`: envuelve `basicAuth` de Hono
 (`hono/basic-auth`) con credenciales de `EDITOR_USER`/`EDITOR_PASSWORD` (env). **El
 servidor lanza un error al arrancar si faltan** — no hay modo "sin auth" accidental.
 
-En `index.ts`, montado como middleware sobre `/api/*` **antes** de las rutas:
+En `index.ts`, montado como middleware sobre `*` (toda ruta, no solo `/api/*` —
+ampliado durante la Fase 4 tras probar en el panel real de Dokploy que configurar un
+middleware de Basic Auth propio en Traefik era frágil/dependiente de la versión exacta
+del panel; ver §11.4 y el razonamiento ahí):
 
 ```ts
 const requireAuth = editorAuth();
-app.use("/api/*", async (c, next) => {
+app.use("*", async (c, next) => {
   if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
+  if (c.req.method === "GET" && c.req.path === "/api/health") return next();
   return requireAuth(c, next);
 });
 ```
 
-**Única excepción, obligatoria:** `GET /api/uploads/:filename` queda público — es la URL
-que Twenty necesita leer sin credenciales para "Imagen Editada" (requisito del §9.2, no
-negociable). Nada más de `/api/*` queda abierto: ni `GET /api/designs`, ni
-`/api/news/:id`, ni `/api/news/:id/image` (la imagen de origen — el navegador del
-operador ya tiene las credenciales cacheadas de la primera llamada, así que la carga en
-canvas funciona sola), ni `publish-image`.
+**Dos excepciones, obligatorias:**
+- `GET /api/uploads/:filename` — es la URL que Twenty necesita leer sin credenciales
+  para "Imagen Editada" (requisito del §9.2, no negociable).
+- `GET /api/health` — lo consulta el `HEALTHCHECK` de Docker/Dokploy, no un operador (ver
+  §11.4: confirmado con `docker inspect` que sigue en estado `healthy` con toda la app
+  detrás de auth, porque ese healthcheck pega directo al contenedor, no pasa por Traefik).
+
+Nada más queda abierto: ni el HTML/JS/CSS de la SPA compilada (`dist/`, servida por
+`serveStatic` en `serve.ts`), ni `GET /api/designs`, ni `/api/news/:id`, ni
+`/api/news/:id/image` (la imagen de origen — el navegador del operador ya tiene las
+credenciales cacheadas de la primera llamada, así que la carga en canvas funciona sola),
+ni `publish-image`.
 
 **Por qué Basic Auth y no una sesión propia:** un solo operador, sin roles, sin
-necesidad de logout — Basic Auth resuelve esto con cero código de sesión/cookies. El
-navegador cachea las credenciales **por origen** tras el primer 401 y las reenvía solo en
-todas las requests siguientes al mismo origen (`fetch`, `<img src>`, lo que sea) — no
-hace falta ningún tratamiento especial para que el canvas cargue imágenes vía `<img>`
-después del primer login. Verificado con `curl`: sin credenciales → `401`; con
+necesidad de logout — Basic Auth resuelve esto con cero código de sesión/cookies.
+`EDITOR_PASSWORD` no es una contraseña memorizable: es un secreto aleatorio largo (24
+caracteres, generado con `crypto.randomBytes`), funciona en la práctica como una API key
+entregada vía el prompt nativo de Basic Auth del navegador — sin necesidad de inventar un
+esquema de header/query-param propio, que además sería más frágil (una API key en la URL
+queda en logs de acceso y en el historial del navegador; Basic Auth no expone
+credenciales en la URL). El navegador cachea las credenciales **por origen** tras el
+primer 401 y las reenvía sola en todas las requests siguientes al mismo origen (`fetch`,
+`<img src>`, lo que sea) — no hace falta ningún tratamiento especial para que el canvas
+cargue imágenes vía `<img>` después del primer login. Verificado con `curl` (contra el
+proceso local y contra el contenedor Docker real, ver §11.1): sin credenciales → `401` en
+cualquier ruta (incluida la raíz `/` y los assets `/assets/*.js`); con
 `-u admin:<pass>` → `200`; con credenciales incorrectas → `401`; `GET
-/api/uploads/<inexistente>` sin credenciales → `404` (no `401`, confirma que quedó
-público). En dev, el proxy de Vite (`vite.config.ts`, `/api → :8787`) reenvía cabeceras y
-status transparentemente, así que el flujo de auth funciona igual en `:5173` que en
-producción.
+/api/uploads/<inexistente>` y `GET /api/health` sin credenciales → responden igual que
+con auth (no `401`, confirma que quedaron públicas). En dev, el proxy de Vite
+(`vite.config.ts`, `/api → :8787`) reenvía cabeceras y status transparentemente — pero
+ojo: en dev el HTML/JS de la SPA lo sirve **Vite** en `:5173` directamente (sin pasar por
+este middleware, que vive en el backend `:8787`), así que la protección de "toda la app"
+solo es real en producción (`pnpm run build && pnpm run start`, o el contenedor Docker).
+En dev, la SPA en sí no está protegida — solo lo está una vez desplegada.
 
 Credenciales en `.env` (`EDITOR_USER=admin`, `EDITOR_PASSWORD=<generada
 aleatoriamente>`) — **cámbialas** por unas propias cuando quieras, solo hace falta
@@ -486,10 +509,12 @@ como lo separa `PLAN.md` §5:
 
 ## 11. Fase 4 — Despliegue en el VPS con Dokploy
 
-Decisiones del usuario para esta fase: acceso por **dominio público + Basic Auth en
-Traefik** (sobre el Basic Auth de app de la Fase 3 — dos capas independientes), y Twenty
-corre en **el mismo VPS/Dokploy** que el editor (así que las llamadas editor→Twenty
-pueden optimizarse a red interna de Docker más adelante, ver §11.5).
+Decisiones del usuario para esta fase: acceso por **dominio público** (Twenty corre en
+**el mismo VPS/Dokploy** que el editor, así que las llamadas editor→Twenty pueden
+optimizarse a red interna de Docker más adelante, ver §11.5). El plan inicial era sumar
+un segundo Basic Auth en Traefik sobre el de la app; se descartó por frágil de configurar
+en este panel concreto y se resolvió ampliando el Basic Auth de la app a toda la web, no
+solo `/api/*` — ver §10.1 y §11.4 para el razonamiento completo.
 
 ### 11.1 Imagen (`Dockerfile`, nuevo)
 
@@ -549,27 +574,40 @@ arrancó igualmente leyendo las env vars del propio proceso).
 | `TWENTY_API_URL` | `https://crm.elfarodealicante.com` (o el nombre de servicio interno si se aplica §11.5) |
 | `TWENTY_TOKEN` | el token real (nunca en el cliente, ya se cumple) |
 | `PUBLIC_BASE_URL` | `https://<dominio-real-del-editor>` (Fase 4 — hoy en local es `http://localhost:8787`) |
-| `EDITOR_USER` / `EDITOR_PASSWORD` | credenciales del Basic Auth de la app (Fase 3) — pueden (y conviene que) sean **distintas** de las del Basic Auth de Traefik (§11.4), dos capas independientes |
+| `EDITOR_USER` / `EDITOR_PASSWORD` | credenciales del Basic Auth de la app (Fase 3/4) — protege **toda** la app, no solo `/api/*` (ver §10.1/§11.4); `EDITOR_PASSWORD` debe ser un secreto largo generado, no una contraseña memorizable |
 
 `DB_PATH`, `UPLOADS_DIR` y `PORT` **no hace falta definirlas** — el `Dockerfile` ya las
 fija a los valores correctos (`/data/...`, `8787`); solo tocarlas si se cambia el layout
 de volúmenes.
 
-### 11.4 Dominio y Traefik (decisión del usuario: dominio público + Basic Auth)
+### 11.4 Dominio y Traefik
 
 - Asignar dominio en Dokploy → Traefik gestiona TLS con Let's Encrypt automáticamente,
   sin certificados a mano.
-- Añadir el middleware de **Basic Auth de Traefik** al dominio (panel de Dokploy →
-  Domains → Middlewares, o el equivalente en la versión que tengas) con credenciales
-  **propias**, distintas de `EDITOR_USER`/`EDITOR_PASSWORD`. Con esto el operador
-  necesita pasar dos prompts de Basic Auth (Traefik primero, la app después) — molesto
-  una vez por sesión de navegador, pero es defensa en profundidad real: si algún día se
-  quita o se rompe el auth de la app por error, Traefik sigue bloqueando el acceso.
-- **Health check en Dokploy**: configurar `GET /api/health` como ruta de health check —
-  responde `200 {"ok":true}` **sin auth** (excluida a propósito del middleware de la
-  app, ver `src/server/index.ts`; si además pasa por Traefik con Basic Auth delante, hay
-  que excluir esta ruta también del middleware de Traefik o el health check del propio
-  Dokploy empezará a fallar con 401).
+- **Middleware de Basic Auth en Traefik: decidido que NO hace falta, ampliamos el auth de
+  la app en su lugar.** El plan original (decisión inicial del usuario) era añadir un
+  segundo Basic Auth en el middleware de dominio de Traefik, además del de la app
+  (Fase 3). En la práctica, el panel de Dokploy de este despliegue solo permite
+  referenciar middlewares ya definidos en un fichero de config dinámica de Traefik
+  (`Domains → Middlewares` acepta texto tipo `nombre@file`, no un formulario con
+  usuario/contraseña) — hay que editar esa config en una sección aparte del dashboard
+  (a nivel de servidor, no de esta Application), generar el hash `apr1` a mano, etc. Se
+  consideró demasiado fràgil/dependiente de la versión exacta del panel para ser un
+  requisito de seguridad real. **Solución adoptada:** el middleware de auth de la app
+  (§10.1) se amplió de `/api/*` a `*` — protege también el HTML/JS de la SPA, no solo la
+  API. Con `EDITOR_PASSWORD` como secreto aleatorio largo (no una contraseña
+  memorizable), este único middleware ya cubre el requisito de "nada accesible sin
+  credencial" de `PLAN.md` §6 sin depender de nada de Traefik. **El campo `Middlewares`
+  del dominio en Dokploy se puede dejar vacío.** Si más adelante se quiere esa segunda
+  capa igualmente (defensa en profundidad extra), sigue siendo válida — solo que ya no es
+  necesaria para estar seguro.
+- **Health check en Dokploy**: configurar `GET /api/health` como ruta de health check,
+  puerto `8787` — responde `200 {"ok":true}` sin auth de app. **No hace falta excluirla
+  de nada en Traefik**: verificado con `docker inspect` sobre el contenedor real (toda la
+  app ya detrás de auth) que el `HEALTHCHECK` de Docker sigue en estado `healthy` — pega
+  directo al contenedor por su IP/puerto interno, no pasa por el dominio público ni por
+  Traefik, así que un eventual Basic Auth a nivel de dominio no lo afectaría de todas
+  formas.
 - **Límite de memoria**: fijar un límite modesto en los recursos de la Application en
   Dokploy (p. ej. 512 MB) — es una app ligera (sin render en servidor, sin `jsdom`/
   `canvas` en el bundle de runtime), y el VPS ya tiene Twenty + n8n usando memoria.

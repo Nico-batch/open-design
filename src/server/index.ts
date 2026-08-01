@@ -21,13 +21,18 @@ app.use("*", async (c, next) => {
   c.res.headers.set("Referrer-Policy", "same-origin");
 });
 
-// Basic Auth en toda la API, EXCEPTO el GET de uploads: ese debe seguir siendo
-// accesible sin auth porque es la URL que se escribe en "Imagen Editada" de Twenty
-// (requisito obligatorio del usuario — ver CLAUDE.md §9.2). Nada más de /api/* queda
-// abierto: el operador solo introduce credenciales una vez, el navegador las cachea
-// por origen y las reenvía sola en fetch/<img> siguientes.
+// Basic Auth en TODA la app (API + la SPA/estáticos que sirve serve.ts en producción),
+// EXCEPTO dos rutas públicas obligatorias:
+//   - GET /api/uploads/:filename — es la URL que se escribe en "Imagen Editada" de
+//     Twenty, tiene que responder sin credenciales (requisito del usuario, CLAUDE.md §9.2).
+//   - GET /api/health — lo consulta el HEALTHCHECK de Docker/Dokploy, no un operador.
+// Nada más queda abierto — ni el HTML/JS de la SPA, así que no hace falta ningún
+// middleware adicional en Traefik para que esto sea seguro: EDITOR_PASSWORD es un
+// secreto aleatorio largo (no una contraseña memorizable), funciona como una API key
+// entregada vía el prompt nativo de Basic Auth del navegador. El navegador la cachea por
+// origen tras el primer 401 y la reenvía sola en requests siguientes (fetch/<img>/etc).
 const requireAuth = editorAuth();
-app.use("/api/*", async (c, next) => {
+app.use("*", async (c, next) => {
   if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
   if (c.req.method === "GET" && c.req.path === "/api/health") return next();
   return requireAuth(c, next);
