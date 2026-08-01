@@ -2,8 +2,35 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { query, get, run } from "./db.js";
 import { putUpload, getUpload } from "./uploads.js";
 import { fetchNews, setNewsEditedImage } from "./twenty.js";
+import { editorAuth } from "./auth.js";
 
 const app = new OpenAPIHono();
+
+// ── Seguridad (Fase 3) ──────────────────────────────────────────────
+//
+// Cabeceras defensivas para toda respuesta (documento SPA en producción incluido).
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; " +
+      "script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; " +
+      "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  );
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("Referrer-Policy", "same-origin");
+});
+
+// Basic Auth en toda la API, EXCEPTO el GET de uploads: ese debe seguir siendo
+// accesible sin auth porque es la URL que se escribe en "Imagen Editada" de Twenty
+// (requisito obligatorio del usuario — ver CLAUDE.md §9.2). Nada más de /api/* queda
+// abierto: el operador solo introduce credenciales una vez, el navegador las cachea
+// por origen y las reenvía sola en fetch/<img> siguientes.
+const requireAuth = editorAuth();
+app.use("/api/*", async (c, next) => {
+  if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
+  return requireAuth(c, next);
+});
 
 // ── Schemas ──────────────────────────────────────────────────────────
 
@@ -346,6 +373,12 @@ app.openapi(getTemplate, async (c) => {
 });
 
 // ── File uploads ────────────────────────────────────────────────────
+//
+// SVG queda fuera de la whitelist: es el vector de XSS más probable en un editor de
+// imágenes (un <script>/onload dentro del SVG se ejecutaría con el origen del editor
+// si se sirviera inline). No hace falta como formato de subida — todo lo que entra al
+// canvas se rasteriza al exportar. Límite de tamaño para no permitir subidas gigantes.
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
 
 app.post("/api/uploads", async (c) => {
   const body = await c.req.parseBody();
@@ -355,14 +388,17 @@ app.post("/api/uploads", async (c) => {
   }
 
   const ext = file.name?.split(".").pop()?.toLowerCase() || "png";
-  const allowed = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
+  const allowed = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
   if (!allowed.has(ext)) {
     return c.json({ error: "Unsupported file type" }, 400);
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return c.json({ error: "File too large" }, 413);
   }
 
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const data = await file.arrayBuffer();
-  const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : ext === "svg" ? "image/svg+xml" : "image/png";
+  const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : "image/png";
   const url = await putUpload(filename, data, mime);
 
   return c.json({ url }, 200);
@@ -374,7 +410,12 @@ app.get("/api/uploads/:filename", async (c) => {
   if (!result) return c.json({ error: "Not found" }, 404);
 
   return new Response(result.data, {
-    headers: { "Content-Type": result.contentType, "Cache-Control": "public, max-age=31536000" },
+    headers: {
+      "Content-Type": result.contentType,
+      "Content-Disposition": `inline; filename="${filename.replace(/["\\]/g, "")}"`,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "public, max-age=31536000",
+    },
   });
 });
 
@@ -473,6 +514,9 @@ app.post("/api/news/:id/publish-image", async (c) => {
   const file = body["file"];
   if (!file || typeof file === "string") {
     return c.json({ error: "No file provided" }, 400);
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return c.json({ error: "File too large" }, 413);
   }
 
   const publicBaseUrl = process.env.PUBLIC_BASE_URL;

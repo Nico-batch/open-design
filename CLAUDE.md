@@ -133,6 +133,8 @@ src/
 │   ├── db.ts         — node:sqlite contra schema.sql (ver §1)
 │   ├── serve.ts      — entrypoint Node (@hono/node-server), dev y producción
 │   ├── uploads.ts    — uploads a filesystem local (Node puro, fs)
+│   ├── auth.ts        — Basic Auth de la app (ver §10)
+│   ├── twenty.ts       — cliente GraphQL de Twenty (ver §9)
 │   └── schema.sql    — DDL + seed de templates (SQL estándar, portable)
 └── client/
     ├── main.tsx, app.tsx       — bootstrap Preact; main.tsx importa fonts.css
@@ -198,19 +200,15 @@ negrita por selección persistida correctamente, panel de texto estable tras edi
 
 ## 5. Hallazgos de seguridad (para Fase 3)
 
-- **`POST /api/uploads`** ([`src/server/index.ts`](src/server/index.ts), sección "File
-  uploads"): la whitelist de extensiones permite **`svg`** explícitamente. `PLAN.md` §4/§6
-  ya marca esto como riesgo ("denegar o sanear SVG"); confirmado en código, no es hipotético.
-- **Sin autenticación**: ninguna ruta bajo `/api/*` tiene middleware de auth. Confirma
-  `PLAN.md` §3/§6 tal cual.
+> **Resueltos en Fase 3** (ver §10) — se dejan documentados aquí como hallazgo histórico:
+> whitelist de subida permitía SVG, y no había ninguna autenticación en `/api/*`.
+
 - **Sanitización de nombre de fichero al leer** (`uploads.ts`, función `sanitize`) existe y
   es razonable (whitelist de caracteres), pero **no se aplica al escribir** (`putUpload` usa
   el `filename` generado con timestamp+random, así que en la práctica no hay input de
   usuario en el nombre al guardar — solo la extensión viene del cliente).
-- **CORS/tainted canvas**: no hay proxy de imágenes externas todavía; todo el contenido hoy
-  se sirve desde el propio origen (`/api/uploads/:filename`), así que el problema de
-  "tainted canvas" que anticipa `PLAN.md` §7 aparecerá en cuanto se añada el fetch de la
-  imagen de origen desde Twenty (Fase 2) si no se proxea por el backend.
+- **CORS/tainted canvas**: resuelto — la imagen de origen de Twenty se proxea por
+  `GET /api/news/:id/image` (mismo origen), no se carga cross-origin directamente.
 
 ## 6. `pnpm audit`
 
@@ -250,9 +248,14 @@ repo (se recrean solos al arrancar).
 provisto por el usuario desde `img_custom/logow.jpg`, ahora en `.gitignore` porque tiene
 otros archivos personales sueltos, no solo el logo).
 
+**Fase 3 completa** (seguridad/hardening a nivel app, ver §10).
+
 **Sin decidir todavía (activos reales, no solo código):**
 - Fuentes de marca definitivas — hoy autoalojadas las mismas 10 familias que traía el
   template (Google Fonts, descargadas y servidas localmente).
+- Perímetro de red de la Fase 4 (VPN vs. basic auth/forward-auth en Traefik vs. SSO) y el
+  dominio real del editor — determina `PUBLIC_BASE_URL` y la URL final del enlace de
+  Twenty (§9.7).
 
 ## 9. Fase 2 — Integración con Twenty (completa, sin n8n)
 
@@ -365,3 +368,108 @@ máquina hasta que exista el dominio real. Rellenar el campo Link con el `id` de
 registro es manual por ahora (bajo volumen, per lo que dijo el usuario sobre el campo de
 estado); automatizarlo con un Workflow de Twenty (fórmula `CONCAT` sobre `record.id`) es
 un afinado de Fase 5, no bloqueante.
+
+## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
+
+Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del
+despliegue — eso es Fase 4: Traefik, VPN/allowlist de IP, contenedor no-root, red de
+Dokploy). Todo lo de abajo está en [`src/server/index.ts`](src/server/index.ts) y
+[`src/server/auth.ts`](src/server/auth.ts) (nuevo), verificado con `curl` contra el
+servidor real (no solo lectura de código).
+
+### 10.1 Auth en `/api/*`
+
+`src/server/auth.ts` expone `editorAuth()`: envuelve `basicAuth` de Hono
+(`hono/basic-auth`) con credenciales de `EDITOR_USER`/`EDITOR_PASSWORD` (env). **El
+servidor lanza un error al arrancar si faltan** — no hay modo "sin auth" accidental.
+
+En `index.ts`, montado como middleware sobre `/api/*` **antes** de las rutas:
+
+```ts
+const requireAuth = editorAuth();
+app.use("/api/*", async (c, next) => {
+  if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
+  return requireAuth(c, next);
+});
+```
+
+**Única excepción, obligatoria:** `GET /api/uploads/:filename` queda público — es la URL
+que Twenty necesita leer sin credenciales para "Imagen Editada" (requisito del §9.2, no
+negociable). Nada más de `/api/*` queda abierto: ni `GET /api/designs`, ni
+`/api/news/:id`, ni `/api/news/:id/image` (la imagen de origen — el navegador del
+operador ya tiene las credenciales cacheadas de la primera llamada, así que la carga en
+canvas funciona sola), ni `publish-image`.
+
+**Por qué Basic Auth y no una sesión propia:** un solo operador, sin roles, sin
+necesidad de logout — Basic Auth resuelve esto con cero código de sesión/cookies. El
+navegador cachea las credenciales **por origen** tras el primer 401 y las reenvía solo en
+todas las requests siguientes al mismo origen (`fetch`, `<img src>`, lo que sea) — no
+hace falta ningún tratamiento especial para que el canvas cargue imágenes vía `<img>`
+después del primer login. Verificado con `curl`: sin credenciales → `401`; con
+`-u admin:<pass>` → `200`; con credenciales incorrectas → `401`; `GET
+/api/uploads/<inexistente>` sin credenciales → `404` (no `401`, confirma que quedó
+público). En dev, el proxy de Vite (`vite.config.ts`, `/api → :8787`) reenvía cabeceras y
+status transparentemente, así que el flujo de auth funciona igual en `:5173` que en
+producción.
+
+Credenciales en `.env` (`EDITOR_USER=admin`, `EDITOR_PASSWORD=<generada
+aleatoriamente>`) — **cámbialas** por unas propias cuando quieras, solo hace falta
+reiniciar el server. `.env.example` documenta ambas variables sin valores reales.
+
+### 10.2 Saneado de subidas
+
+`POST /api/uploads` y `POST /api/news/:id/publish-image` (`src/server/index.ts`):
+
+- **SVG fuera de la whitelist** — ya no se acepta (`allowed = new Set(["png", "jpg",
+  "jpeg", "gif", "webp"])`, sin `"svg"`). Era el vector de XSS más probable señalado en
+  `PLAN.md` §7; no hacía falta como formato de entrada porque todo lo que llega al canvas
+  se rasteriza al exportar. Verificado: subir un `.svg` con Basic Auth válido →
+  `400 Unsupported file type`.
+- **Límite de tamaño**: `MAX_UPLOAD_BYTES = 15 MB` en ambos endpoints → `413` si se
+  excede.
+- **Cabeceras al servir** (`GET /api/uploads/:filename`): `Content-Disposition: inline;
+  filename="..."` (nombre saneado, sin comillas/backslashes) + `X-Content-Type-Options:
+  nosniff`, para que el navegador nunca intente reinterpretar el contenido como otro tipo
+  MIME. Verificado con `curl -D -`.
+- `uploads.ts` no cambió — su `sanitize()` (whitelist de caracteres en el nombre al leer)
+  ya era razonable; el nombre al escribir sigue siendo generado por el servidor
+  (timestamp + random), nunca el `filename` que manda el cliente.
+
+### 10.3 Cabeceras de seguridad / CSP
+
+Middleware global (`app.use("*", ...)` en `index.ts`, antes de todo lo demás) que añade a
+**toda** respuesta (incluida la SPA servida por `serveStatic` en producción):
+
+```
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:;
+  style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:;
+  font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+```
+
+Notas de diseño:
+- `style-src 'unsafe-inline'` hace falta porque Fabric.js manipula `style` inline del
+  contenedor del canvas; sin esto se rompería el editor. `script-src` se queda estricto
+  (`'self'`, sin `unsafe-inline`/`eval`) porque el build de producción de Vite no necesita
+  ninguno de los dos.
+- `frame-ancestors 'none'`: hoy el punto de entrada es pestaña nueva (`?recordId=`, ver
+  §9.7), no iframe embebido en Twenty. Si en algún momento se decide embeber por iframe
+  (`PLAN.md` §8 decisión #2), esta cabecera hay que cambiarla al origen exacto de Twenty
+  — dejarla en `'none'` bloquearía el iframe.
+- En dev, esta cabecera solo viaja en las respuestas JSON del backend (`:8787`); el HTML
+  que el navegador realmente renderiza en dev lo sirve Vite en `:5173` directamente, sin
+  pasar por este middleware. La cabecera cobra efecto real sobre el documento cuando se
+  compila y se sirve con `pnpm run build && pnpm run start` (Hono sirviendo `dist/`).
+
+### 10.4 Qué queda fuera de Fase 3 (a propósito)
+
+Todo lo que depende del **despliegue**, no del código de la app, queda para la Fase 4 tal
+como lo separa `PLAN.md` §5:
+- Traefik de Dokploy con middleware de auth/allowlist de IP, o VPN/red interna en vez de
+  dominio público.
+- Contenedor no-root, sin acceso a los volúmenes/DB de Twenty.
+- `X-Forwarded-Proto/Host` (trust proxy) detrás de Traefik.
+- `pnpm audit`/Renovate (`PLAN.md` §6) — sigue pendiente, sin cambios desde §6 de este
+  documento (el ruido sigue viniendo de `fabric` → `jsdom`, no explotable en runtime tal
+  como se despliega).
