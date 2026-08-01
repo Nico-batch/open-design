@@ -32,9 +32,17 @@ export interface EditorContextValue {
 
   // Canvas actions
   addText: (preset: "heading" | "subheading" | "body", customText?: string) => void;
+  applyTextToCanvas: (canvas: fabric.Canvas, preset: "heading" | "subheading" | "body", customText?: string) => void;
   addShape: (type: "rect" | "circle" | "line" | "triangle") => void;
   addImage: (url: string) => void;
   setBackground: (type: "color" | "gradient" | "image", value: string, fit?: "cover" | "contain") => void;
+  applyBackgroundToCanvas: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    type: "color" | "gradient" | "image",
+    value: string,
+    fit?: "cover" | "contain"
+  ) => Promise<void> | void;
   setBackgroundImageFit: (fit: "cover" | "contain") => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   toggleBold: () => void;

@@ -330,10 +330,32 @@ con índice único (parcial, solo cuando no es `NULL`) — un diseño por notici
 - `src/client/hooks/use-router.ts` expone `recordId` (de `?recordId=` en la URL, cualquier
   ruta — pensado para `/edit?recordId=<id>`).
 - `src/client/app.tsx`: si hay `recordId` y no hay `designId` todavía, llama a
-  `openFromNewsRecord` (→ `POST /api/designs/from-news/:id`) y navega a `/design/:id`. La
-  primera vez que se abre (página en blanco, `canvas_json === "{}"`), precarga la imagen
-  de origen como fondo (`cover`) y el título como heading — **solo la primera vez**; si el
-  operador ya guardó algo, no se vuelve a tocar en aperturas siguientes.
+  `openFromNewsRecord` (→ `POST /api/designs/from-news/:id`) y navega a `/design/:id`.
+- **Imagen de origen: se refresca en CADA apertura del editor**, no solo la primera vez
+  (cambiado tras el feedback del usuario — la "Imagen" en Twenty puede reemplazarse
+  después de guardar un borrador si no encajaba, y el editor debe reflejar siempre la
+  versión actual, no una copia congelada de la primera vez que se abrió). Vive en
+  `src/client/components/page-canvas.tsx`, no en `app.tsx` (donde vivía antes) — tiene
+  que ejecutarse **después** de que `loadFromJSON` termine de cargar el `canvas_json`
+  guardado de esa página, porque `loadFromJSON` sustituye todo el contenido del canvas:
+  si el refresco se dispara antes (p. ej. a través del "canvas activo" de
+  `use-canvas.ts`, que no da ninguna garantía de orden frente a esa carga async), la
+  imagen recién puesta se borraría en cuanto `loadFromJSON` resolviera. Por eso
+  `setBackground`/`addText` de `use-canvas.ts` se separaron en una parte "resuelve cuál
+  es el canvas activo" (sin cambios de comportamiento para el resto del editor) y una
+  parte parametrizada por canvas explícito (`applyBackgroundToCanvas`/
+  `applyTextToCanvas`, nuevas, expuestas por el contexto) que `page-canvas.tsx` llama
+  directamente sobre su propio canvas, encadenada dentro del mismo `.then()` de la carga
+  — así queda garantizado el orden sin necesitar ninguna señal/callback nueva entre
+  componentes.
+  El título por defecto (heading) **sigue aplicándose solo la primera vez** (página en
+  blanco, `canvas_json === "{}"`) — solo la imagen se refresca siempre; si el operador ya
+  escribió texto, no se toca. Solo se aplica en la página principal (`pages[0]`) del
+  diseño, igual que antes. Verificado con Playwright: tras guardar contenido y refrescar
+  la página del navegador, se repiten las llamadas a `GET /api/news/:id` y
+  `GET /api/news/:id/image`, el título y una forma añadida a mano se conservan sin
+  duplicarse, y `bgSrc` del objeto de fondo en el canvas sigue apuntando al proxy
+  correcto — sin errores de consola.
 - Botón **"Guardar en Twenty"** en el toolbar (visible solo si el diseño tiene
   `twenty_record_id`): exporta el PNG (`exportPNGBlob`, nueva variante de `exportPNG` que
   devuelve un `Blob` en vez de forzar la descarga) y lo sube vía `publish-image`.

@@ -154,10 +154,11 @@ export function useCanvasState() {
 
   // ── Text ────────────────────────────────────────────────────────────
 
-  const addText = useCallback(
-    (preset: "heading" | "subheading" | "body", customText?: string) => {
-      const canvas = getActiveCanvas();
-      if (!canvas) return;
+  // Canvas-parameterized so page-canvas.tsx can target a specific (not necessarily
+  // "active") canvas right after it finishes loading its saved JSON — see
+  // applyBackgroundToCanvas below for why that sequencing matters.
+  const applyTextToCanvas = useCallback(
+    (canvas: fabric.Canvas, preset: "heading" | "subheading" | "body", customText?: string) => {
       const cfg = TEXT_PRESETS[preset];
       const text = new fabric.Textbox(customText || cfg.text, {
         left: canvasWidth / 2 - 200,
@@ -174,7 +175,16 @@ export function useCanvasState() {
       canvas.setActiveObject(text);
       canvas.requestRenderAll();
     },
-    [getActiveCanvas, canvasWidth, canvasHeight]
+    [canvasWidth, canvasHeight]
+  );
+
+  const addText = useCallback(
+    (preset: "heading" | "subheading" | "body", customText?: string) => {
+      const canvas = getActiveCanvas();
+      if (!canvas) return;
+      applyTextToCanvas(canvas, preset, customText);
+    },
+    [getActiveCanvas, applyTextToCanvas]
   );
 
   // ── Shapes ──────────────────────────────────────────────────────────
@@ -284,17 +294,19 @@ export function useCanvasState() {
     });
   };
 
-  const setBackground = useCallback(
-    (type: "color" | "gradient" | "image", value: string, fit: "cover" | "contain" = "cover") => {
-      const canvas = getActiveCanvas();
-      const pageId = activeCanvasIdRef.current;
-      if (!canvas || !pageId) return;
+  // Canvas-parameterized so page-canvas.tsx can refresh the source image on a specific
+  // page right after its saved JSON finishes loading (loadFromJSON replaces the whole
+  // canvas content, so anything added before it resolves would just get wiped — this
+  // must run strictly after, not through the "whichever canvas is active" indirection
+  // that setBackground below uses, which has no such ordering guarantee).
+  const applyBackgroundToCanvas = useCallback(
+    (canvas: fabric.Canvas, pageId: string, type: "color" | "gradient" | "image", value: string, fit: "cover" | "contain" = "cover") => {
       if (type === "color" || type === "gradient") {
         canvas.backgroundColor = value;
         canvas.requestRenderAll();
         saveHistory(pageId);
       } else if (type === "image") {
-        fabric.FabricImage.fromURL(value, { crossOrigin: "anonymous" }).then((img) => {
+        return fabric.FabricImage.fromURL(value, { crossOrigin: "anonymous" }).then((img) => {
           fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
           img.set({ selectable: false, evented: false });
           const objects = canvas.getObjects();
@@ -309,7 +321,17 @@ export function useCanvasState() {
         });
       }
     },
-    [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
+    [canvasWidth, canvasHeight, saveHistory]
+  );
+
+  const setBackground = useCallback(
+    (type: "color" | "gradient" | "image", value: string, fit: "cover" | "contain" = "cover") => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      applyBackgroundToCanvas(canvas, pageId, type, value, fit);
+    },
+    [getActiveCanvas, applyBackgroundToCanvas]
   );
 
   // Re-fits the current background image (if any) without re-uploading it.
@@ -584,9 +606,11 @@ export function useCanvasState() {
     fitScale,
     setFitScale,
     addText,
+    applyTextToCanvas,
     addShape,
     addImage,
     setBackground,
+    applyBackgroundToCanvas,
     setBackgroundImageFit,
     updateSelectedObject,
     toggleBold,

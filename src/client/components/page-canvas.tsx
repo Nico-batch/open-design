@@ -2,7 +2,8 @@ import { useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
-import type { Page } from "../types";
+import { api } from "../api";
+import type { Page, NewsRecord } from "../types";
 
 interface PageCanvasProps {
   page: Page;
@@ -13,11 +14,16 @@ interface PageCanvasProps {
 }
 
 export function PageCanvas({ page, isActive, width, height, onActivate }: PageCanvasProps) {
-  const { registerCanvas, unregisterCanvas } = useEditor();
+  const { registerCanvas, unregisterCanvas, activeDesign, pages, applyBackgroundToCanvas, applyTextToCanvas } = useEditor();
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const onActivateRef = useRef(onActivate);
   onActivateRef.current = onActivate;
+  // Captured once at mount — this effect only ever runs on mount (empty deps below),
+  // so later changes to these wouldn't be picked up anyway; that's fine, they're stable
+  // for the lifetime of a single "open the editor" session.
+  const twentyRecordIdRef = useRef(activeDesign?.twenty_record_id ?? null);
+  const isPrimaryPageRef = useRef(pages[0]?.id === page.id);
 
   useEffect(() => {
     if (!canvasElRef.current || fabricRef.current) return;
@@ -131,18 +137,41 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       if (e.target) applyCustomControls(e.target);
     });
 
+    // If this is the primary page of a design linked to a Twenty News record, refresh
+    // the source image from Twenty every time the editor loads — the source "Imagen" in
+    // Twenty can change after a draft was already saved (e.g. it didn't fit and got
+    // swapped), so we shouldn't keep showing whatever was fetched the first time. Text
+    // content the operator already wrote is left alone; only the background image is
+    // replaced. Runs strictly *after* the saved JSON has finished loading below —
+    // loadFromJSON replaces the whole canvas, so doing this any earlier would just get
+    // wiped out once it resolves.
+    const refreshFromTwenty = (isBlankPage: boolean) => {
+      const twentyRecordId = twentyRecordIdRef.current;
+      if (!isPrimaryPageRef.current || !twentyRecordId) return;
+      api<NewsRecord>("GET", `/api/news/${twentyRecordId}`)
+        .then((news) => {
+          if (news.imageUrl) applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover");
+          if (isBlankPage && news.title) applyTextToCanvas(c, "heading", news.title);
+        })
+        .catch((e) => console.error("Failed to refresh News image:", e));
+    };
+
     // Load page content, then add the fixed logo layer on top
     if (page.canvas_json && page.canvas_json !== "{}") {
       try {
         c.loadFromJSON(JSON.parse(page.canvas_json)).then(async () => {
           await applyLogoToCanvas(c, width, height);
           c.requestRenderAll();
+          refreshFromTwenty(false);
         });
       } catch {
         // ignore parse errors
       }
     } else {
-      applyLogoToCanvas(c, width, height).then(() => c.requestRenderAll());
+      applyLogoToCanvas(c, width, height).then(() => {
+        c.requestRenderAll();
+        refreshFromTwenty(true);
+      });
     }
 
     // On mouse down, activate this canvas (use ref to avoid stale closure)
