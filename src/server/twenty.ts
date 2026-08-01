@@ -34,47 +34,102 @@ async function twentyGraphQL<T>(query: string, variables: Record<string, unknown
   return json.data as T;
 }
 
-export interface TwentyNews {
+// ── Objetos de Twenty soportados ────────────────────────────────────
+//
+// El editor sirve a más de un objeto del CRM: una noticia (News) y un evento (Events).
+// Los dos comparten exactamente la misma mecánica — un campo Files "Imagen" del que sale
+// la foto de origen y un campo Links "Imagen Editada" donde se escribe la URL pública del
+// resultado —, así que lo único que cambia entre ellos son los nombres de la API de
+// GraphQL y de qué campo sale el título por defecto. Eso es lo que describe esta tabla;
+// el resto del código (rutas, cliente) es genérico y solo pasa el tipo por parámetro.
+//
+// Los nombres de abajo están confirmados por introspección contra la instancia real:
+// el objeto personalizado "Events" se expone como `eventCustom`/`updateEventCustom`
+// (Twenty le añade el sufijo `Custom` porque `Event` choca con un nombre del núcleo) —
+// NO como `event`, que no existe. Su título es `name` (String), mientras que el de News
+// es `title` (RichText, se lee el subcampo `markdown`).
+
+export const TWENTY_OBJECT_TYPES = ["news", "event"] as const;
+export type TwentyObjectType = (typeof TWENTY_OBJECT_TYPES)[number];
+
+export function isTwentyObjectType(value: unknown): value is TwentyObjectType {
+  return typeof value === "string" && (TWENTY_OBJECT_TYPES as readonly string[]).includes(value);
+}
+
+interface TwentyObjectDef {
+  /** Campo raíz singular de la query (`news(filter: ...)`). */
+  queryField: string;
+  /** Mutación de actualización (`updateNews(id:, data:)`). */
+  updateMutation: string;
+  /** Trozo de selección GraphQL del campo del que sale el título por defecto. */
+  titleSelection: string;
+  /** Cómo leer ese campo de la respuesta. */
+  readTitle: (node: Record<string, any>) => string | null;
+}
+
+const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
+  news: {
+    queryField: "news",
+    updateMutation: "updateNews",
+    titleSelection: "title { markdown }",
+    readTitle: (node) => node.title?.markdown?.trim() || null,
+  },
+  event: {
+    queryField: "eventCustom",
+    updateMutation: "updateEventCustom",
+    titleSelection: "name",
+    readTitle: (node) => (typeof node.name === "string" ? node.name.trim() || null : null),
+  },
+};
+
+export interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
 }
 
-const GET_NEWS_QUERY = `
-  query GetNews($id: UUID!) {
-    news(filter: { id: { eq: $id } }) {
-      id
-      title { markdown }
-      imagen { fileId label url }
-    }
-  }
-`;
-
-export async function fetchNews(id: string): Promise<TwentyNews | null> {
+/** Lee el registro: su título por defecto y la URL (firmada, de corta duración) de la
+ *  imagen de origen. Esa URL nunca se manda al cliente — se proxea (ver index.ts). */
+export async function fetchRecord(type: TwentyObjectType, id: string): Promise<TwentyRecord | null> {
+  const def = OBJECTS[type];
   const data = await twentyGraphQL<{
-    news: {
+    record: {
       id: string;
-      title: { markdown: string | null } | null;
-      imagen: Array<{ fileId: string; label: string; url: string | null }> | null;
+      imagen: Array<{ url: string | null }> | null;
     } | null;
-  }>(GET_NEWS_QUERY, { id });
+  }>(
+    `query GetTwentyRecord($id: UUID!) {
+      record: ${def.queryField}(filter: { id: { eq: $id } }) {
+        id
+        ${def.titleSelection}
+        imagen { url }
+      }
+    }`,
+    { id }
+  );
 
-  if (!data.news) return null;
+  if (!data.record) return null;
   return {
-    id: data.news.id,
-    title: data.news.title?.markdown?.trim() || null,
-    imageUrl: data.news.imagen?.[0]?.url || null,
+    id: data.record.id,
+    title: def.readTitle(data.record as Record<string, any>),
+    imageUrl: data.record.imagen?.[0]?.url || null,
   };
 }
 
-const SET_IMAGEN_EDITADA_MUTATION = `
-  mutation SetImagenEditada($id: UUID!, $url: String!, $label: String!) {
-    updateNews(id: $id, data: { imagenEditada: { primaryLinkUrl: $url, primaryLinkLabel: $label } }) {
-      id
-    }
-  }
-`;
-
-export async function setNewsEditedImage(id: string, publicUrl: string, label: string): Promise<void> {
-  await twentyGraphQL(SET_IMAGEN_EDITADA_MUTATION, { id, url: publicUrl, label });
+/** Escribe la URL pública del PNG/JPEG exportado en el campo Links "Imagen Editada". */
+export async function setRecordEditedImage(
+  type: TwentyObjectType,
+  id: string,
+  publicUrl: string,
+  label: string
+): Promise<void> {
+  const def = OBJECTS[type];
+  await twentyGraphQL(
+    `mutation SetImagenEditada($id: UUID!, $url: String!, $label: String!) {
+      ${def.updateMutation}(id: $id, data: { imagenEditada: { primaryLinkUrl: $url, primaryLinkLabel: $label } }) {
+        id
+      }
+    }`,
+    { id, url: publicUrl, label }
+  );
 }

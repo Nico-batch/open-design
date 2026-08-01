@@ -7,7 +7,7 @@ import { Home } from "./components/home";
 import { useEffect, useRef } from "preact/hooks";
 
 export function App() {
-  const { path, navigate, designId, recordId } = useRouter();
+  const { path, navigate, designId, recordId, objectType } = useRouter();
   const canvasState = useCanvasState();
   const designState = useDesigns(canvasState.getCanvasJSONForPage);
   const openedRecordIdRef = useRef<string | null>(null);
@@ -21,16 +21,19 @@ export function App() {
     }
   }, [designId, designState.loading]);
 
-  // Entry point from Twenty: /edit?recordId=<News id>. Opens (or resumes) the design
-  // linked to that record and navigates into the editor.
+  // Entry point from Twenty: /edit?recordId=<id>&objectType=news|event. Opens (or
+  // resumes) the design linked to that record and navigates into the editor. The guard
+  // ref keys on the pair, not just the id: the same uuid could in theory come from either
+  // object, and they're different drafts.
   useEffect(() => {
     if (!recordId || designId || designState.loading) return;
-    if (openedRecordIdRef.current === recordId) return;
-    openedRecordIdRef.current = recordId;
-    designState.openFromNewsRecord(recordId).then((id) => {
+    const key = `${objectType}/${recordId}`;
+    if (openedRecordIdRef.current === key) return;
+    openedRecordIdRef.current = key;
+    designState.openFromTwentyRecord(recordId, objectType).then((id) => {
       if (id) navigate(`/design/${id}`);
     });
-  }, [recordId, designId, designState.loading]);
+  }, [recordId, objectType, designId, designState.loading]);
 
   // Preloading the source image (and, on a blank page, the default title heading) from
   // Twenty now happens in page-canvas.tsx, right after each page's own canvas finishes

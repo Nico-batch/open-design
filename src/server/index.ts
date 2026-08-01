@@ -1,7 +1,12 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { query, get, run } from "./db.js";
 import { putUpload, getUpload } from "./uploads.js";
-import { fetchNews, setNewsEditedImage } from "./twenty.js";
+import {
+  fetchRecord,
+  setRecordEditedImage,
+  isTwentyObjectType,
+  type TwentyObjectType,
+} from "./twenty.js";
 import { editorAuth } from "./auth.js";
 
 const app = new OpenAPIHono();
@@ -75,6 +80,7 @@ const DesignSchema = z.object({
   height: z.number(),
   thumbnail_url: z.string().nullable(),
   twenty_record_id: z.string().nullable(),
+  twenty_object_type: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -454,41 +460,56 @@ app.get("/api/uploads/:filename", async (c) => {
 
 // ── Twenty integration ──────────────────────────────────────────────
 //
-// GET /api/news/:id            — datos por defecto (título + URL de imagen propia,
-//                                 esta última siempre vía nuestro proxy: nunca se manda
-//                                 al cliente la URL firmada de Twenty).
-// GET /api/news/:id/image      — proxy de los bytes de la imagen de origen (evita
-//                                 tainted canvas y no expone el token firmado de Twenty).
-// POST /api/news/:id/publish-image — recibe el PNG exportado, lo guarda como upload
-//                                 público y escribe esa URL en el campo "Imagen
-//                                 Editada" (Links) de la noticia. No publica en redes;
-//                                 eso lo hace otro flujo fuera de este editor.
+// Todas las rutas van parametrizadas por el tipo de objeto del CRM (`:type` →
+// "news" | "event"), porque el editor sirve a más de un objeto de Twenty con exactamente
+// la misma mecánica — ver la tabla OBJECTS en twenty.ts. El tipo se guarda en el diseño
+// (`twenty_object_type`), así que "Guardar en Twenty" sabe a qué objeto escribir sin que
+// haga falta volver a mirar la URL de entrada.
+//
+// GET /api/twenty/:type/:id      — datos por defecto (título + URL de imagen propia,
+//                                  esta última siempre vía nuestro proxy: nunca se manda
+//                                  al cliente la URL firmada de Twenty).
+// GET /api/twenty/:type/:id/image — proxy de los bytes de la imagen de origen (evita
+//                                  tainted canvas y no expone el token firmado de Twenty).
+// POST /api/twenty/:type/:id/publish-image — recibe el JPEG exportado, lo guarda como
+//                                  upload público y escribe esa URL en el campo "Imagen
+//                                  Editada" (Links) del registro. No publica en redes;
+//                                  eso lo hace otro flujo fuera de este editor.
+//
+// Las rutas /api/news/:id y /api/news/:id/image se conservan como alias de type="news"
+// más abajo: la URL del proxy queda grabada como `src` del fondo dentro del canvas_json
+// de los diseños ya guardados, así que quitarlas rompería el fondo de esos borradores al
+// abrirlos.
 
-app.get("/api/news/:id", async (c) => {
-  const { id } = c.req.param();
+function parseObjectType(raw: string): TwentyObjectType | null {
+  return isTwentyObjectType(raw) ? raw : null;
+}
+
+async function twentyRecordResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
   try {
-    const news = await fetchNews(id);
-    if (!news) return c.json({ error: "Not found" }, 404);
-    return c.json(
-      {
-        id: news.id,
-        title: news.title,
-        imageUrl: news.imageUrl ? `/api/news/${id}/image` : null,
-      },
-      200
-    );
+    const record = await fetchRecord(objectType, id);
+    if (!record) return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json({
+      id: record.id,
+      title: record.title,
+      imageUrl: record.imageUrl ? `/api/twenty/${objectType}/${id}/image` : null,
+    });
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : "Twenty fetch failed" }, 502);
+    return Response.json(
+      { error: e instanceof Error ? e.message : "Twenty fetch failed" },
+      { status: 502 }
+    );
   }
-});
+}
 
-app.get("/api/news/:id/image", async (c) => {
-  const { id } = c.req.param();
+async function twentyImageResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
   try {
-    const news = await fetchNews(id);
-    if (!news?.imageUrl) return c.json({ error: "Not found" }, 404);
-    const upstream = await fetch(news.imageUrl);
-    if (!upstream.ok || !upstream.body) return c.json({ error: "Upstream fetch failed" }, 502);
+    const record = await fetchRecord(objectType, id);
+    if (!record?.imageUrl) return Response.json({ error: "Not found" }, { status: 404 });
+    const upstream = await fetch(record.imageUrl);
+    if (!upstream.ok || !upstream.body) {
+      return Response.json({ error: "Upstream fetch failed" }, { status: 502 });
+    }
     return new Response(upstream.body, {
       headers: {
         "Content-Type": upstream.headers.get("content-type") || "image/jpeg",
@@ -496,15 +517,42 @@ app.get("/api/news/:id/image", async (c) => {
       },
     });
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : "Twenty fetch failed" }, 502);
+    return Response.json(
+      { error: e instanceof Error ? e.message : "Twenty fetch failed" },
+      { status: 502 }
+    );
   }
+}
+
+app.get("/api/twenty/:type/:id", (c) => {
+  const { type, id } = c.req.param();
+  const objectType = parseObjectType(type);
+  if (!objectType) return c.json({ error: `Tipo de objeto de Twenty desconocido: ${type}` }, 400);
+  return twentyRecordResponse(objectType, id);
 });
 
-app.post("/api/designs/from-news/:newsId", async (c) => {
-  const { newsId } = c.req.param();
+app.get("/api/twenty/:type/:id/image", (c) => {
+  const { type, id } = c.req.param();
+  const objectType = parseObjectType(type);
+  if (!objectType) return c.json({ error: `Tipo de objeto de Twenty desconocido: ${type}` }, 400);
+  return twentyImageResponse(objectType, id);
+});
+
+// Alias heredados: los diseños guardados antes del soporte multi-objeto llevan
+// `/api/news/:id/image` grabado como src del fondo en su canvas_json.
+app.get("/api/news/:id", (c) => twentyRecordResponse("news", c.req.param("id")));
+app.get("/api/news/:id/image", (c) => twentyImageResponse("news", c.req.param("id")));
+
+app.post("/api/designs/from-twenty/:type/:recordId", async (c) => {
+  const { type, recordId } = c.req.param();
+  const objectType = parseObjectType(type);
+  if (!objectType) return c.json({ error: `Tipo de objeto de Twenty desconocido: ${type}` }, 400);
+
+  // COALESCE por el mismo motivo que el índice único (schema.sql): los diseños creados
+  // antes del soporte multi-objeto no tienen tipo guardado y son de News.
   const existing = await get<z.infer<typeof DesignSchema>>(
-    "SELECT * FROM designs WHERE twenty_record_id = ?",
-    [newsId]
+    "SELECT * FROM designs WHERE twenty_record_id = ? AND COALESCE(twenty_object_type, 'news') = ?",
+    [recordId, objectType]
   );
   if (existing) {
     const pages = await query<z.infer<typeof PageSchema>>(
@@ -516,19 +564,19 @@ app.post("/api/designs/from-news/:newsId", async (c) => {
 
   let name = "Untitled Design";
   try {
-    const news = await fetchNews(newsId);
-    if (news?.title) name = news.title.slice(0, 120);
+    const record = await fetchRecord(objectType, recordId);
+    if (record?.title) name = record.title.slice(0, 120);
   } catch {
     // best effort — fall back to the default name
   }
 
   await run(
-    "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id) VALUES (?, ?, ?, ?, ?)",
-    [name, "{}", 1080, 1080, newsId]
+    "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id, twenty_object_type) VALUES (?, ?, ?, ?, ?, ?)",
+    [name, "{}", 1080, 1080, recordId, objectType]
   );
   const row = await get<z.infer<typeof DesignSchema>>(
-    "SELECT * FROM designs WHERE twenty_record_id = ?",
-    [newsId]
+    "SELECT * FROM designs WHERE twenty_record_id = ? AND COALESCE(twenty_object_type, 'news') = ?",
+    [recordId, objectType]
   );
   await run(
     "INSERT INTO pages (design_id, title, canvas_json, sort_order) VALUES (?, ?, ?, ?)",
@@ -544,33 +592,38 @@ app.post("/api/designs/from-news/:newsId", async (c) => {
 // Logging paso a paso a propósito: este endpoint hace tres cosas que pueden fallar de
 // formas muy distintas (parsear un multipart grande, escribir en el volumen, hablar con
 // Twenty) y en producción no había manera de saber en cuál de las tres moría.
-app.post("/api/news/:id/publish-image", async (c) => {
-  const { id } = c.req.param();
-  console.log(`[publish-image ${id}] inicio`);
+app.post("/api/twenty/:type/:id/publish-image", async (c) => {
+  const { type, id } = c.req.param();
+  const objectType = parseObjectType(type);
+  if (!objectType) {
+    console.warn(`[publish-image ${id}] tipo de objeto desconocido: ${type}`);
+    return c.json({ error: `Tipo de objeto de Twenty desconocido: ${type}` }, 400);
+  }
+  console.log(`[publish-image ${objectType}/${id}] inicio`);
 
   let file: File;
   try {
     const body = await c.req.parseBody();
     const parsed = body["file"];
     if (!parsed || typeof parsed === "string") {
-      console.warn(`[publish-image ${id}] sin fichero en el multipart`);
+      console.warn(`[publish-image ${objectType}/${id}] sin fichero en el multipart`);
       return c.json({ error: "No file provided" }, 400);
     }
     file = parsed;
   } catch (e) {
-    console.error(`[publish-image ${id}] fallo al parsear el multipart:`, e);
+    console.error(`[publish-image ${objectType}/${id}] fallo al parsear el multipart:`, e);
     return c.json({ error: "No se pudo leer la imagen enviada" }, 400);
   }
-  console.log(`[publish-image ${id}] fichero recibido: ${file.size} bytes, tipo ${file.type || "(sin tipo)"}`);
+  console.log(`[publish-image ${objectType}/${id}] fichero recibido: ${file.size} bytes, tipo ${file.type || "(sin tipo)"}`);
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    console.warn(`[publish-image ${id}] fichero demasiado grande: ${file.size} > ${MAX_UPLOAD_BYTES}`);
+    console.warn(`[publish-image ${objectType}/${id}] fichero demasiado grande: ${file.size} > ${MAX_UPLOAD_BYTES}`);
     return c.json({ error: "File too large" }, 413);
   }
 
   const publicBaseUrl = process.env.PUBLIC_BASE_URL;
   if (!publicBaseUrl) {
-    console.error(`[publish-image ${id}] PUBLIC_BASE_URL no está definida en el entorno`);
+    console.error(`[publish-image ${objectType}/${id}] PUBLIC_BASE_URL no está definida en el entorno`);
     return c.json({ error: "PUBLIC_BASE_URL no configurado en el servidor" }, 500);
   }
 
@@ -586,22 +639,22 @@ app.post("/api/news/:id/publish-image", async (c) => {
     const data = await file.arrayBuffer();
     const relativeUrl = await putUpload(filename, data, mime);
     publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
-    console.log(`[publish-image ${id}] guardado en disco: ${filename} → ${publicUrl}`);
+    console.log(`[publish-image ${objectType}/${id}] guardado en disco: ${filename} → ${publicUrl}`);
   } catch (e) {
     // Típicamente permisos del volumen (/data no escribible por el usuario no-root) o
     // disco lleno.
-    console.error(`[publish-image ${id}] fallo al escribir el fichero:`, e);
+    console.error(`[publish-image ${objectType}/${id}] fallo al escribir el fichero:`, e);
     return c.json({ error: "No se pudo guardar la imagen en el servidor" }, 500);
   }
 
   try {
-    await setNewsEditedImage(id, publicUrl, "Imagen editada (Open Design)");
+    await setRecordEditedImage(objectType, id, publicUrl, "Imagen editada (Open Design)");
   } catch (e) {
-    console.error(`[publish-image ${id}] fallo al actualizar Twenty:`, e);
+    console.error(`[publish-image ${objectType}/${id}] fallo al actualizar Twenty:`, e);
     return c.json({ error: e instanceof Error ? e.message : "Twenty update failed" }, 502);
   }
 
-  console.log(`[publish-image ${id}] OK`);
+  console.log(`[publish-image ${objectType}/${id}] OK`);
   return c.json({ url: publicUrl }, 200);
 });
 

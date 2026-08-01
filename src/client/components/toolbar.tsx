@@ -216,7 +216,7 @@ export function Toolbar() {
             class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-md text-[11px] font-semibold border-none cursor-pointer transition-all bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
             onClick={handlePublish}
             disabled={publishing}
-            title="Sube el PNG exportado y actualiza el campo Imagen Editada en Twenty (no publica en redes)"
+            title="Sube la imagen exportada y actualiza el campo Imagen Editada del registro en Twenty (no publica en redes)"
           >
             {publishing ? <span class="spinner !border-white/30 !border-t-white" /> : <Send size={13} />}
             {publishing ? "Enviando..." : "Guardar en Twenty"}

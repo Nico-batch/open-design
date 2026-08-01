@@ -6,11 +6,17 @@ CREATE TABLE IF NOT EXISTS designs (
   height INTEGER DEFAULT 1080,
   thumbnail_url TEXT,
   twenty_record_id TEXT,
+  twenty_object_type TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_designs_twenty_record ON designs(twenty_record_id)
+-- Un diseño por registro de Twenty, pero la clave es (objeto, registro): el mismo editor
+-- sirve a varios objetos del CRM (News, Events) y la unicidad tiene que ser por par, no
+-- solo por id. COALESCE porque los diseños creados antes del soporte multi-objeto tienen
+-- el tipo a NULL y son, por definición, de News.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_designs_twenty_record
+  ON designs(COALESCE(twenty_object_type, 'news'), twenty_record_id)
   WHERE twenty_record_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS templates (

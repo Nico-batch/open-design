@@ -6,7 +6,8 @@ import { findBackgroundImage, makeBackgroundInteractive, downscaleOversizedSourc
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { api } from "../api";
-import type { Page, NewsRecord } from "../types";
+import { coerceTwentyObjectType } from "../lib/twenty";
+import type { Page, TwentyRecord } from "../types";
 
 interface PageCanvasProps {
   page: Page;
@@ -34,6 +35,7 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
   // so later changes to these wouldn't be picked up anyway; that's fine, they're stable
   // for the lifetime of a single "open the editor" session.
   const twentyRecordIdRef = useRef(activeDesign?.twenty_record_id ?? null);
+  const twentyObjectTypeRef = useRef(coerceTwentyObjectType(activeDesign?.twenty_object_type));
   const isPrimaryPageRef = useRef(pages[0]?.id === page.id);
 
   useEffect(() => {
@@ -147,10 +149,11 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       if (e.target) applyCustomControls(e.target);
     });
 
-    // If this is the primary page of a design linked to a Twenty News record, refresh
-    // the source image from Twenty every time the editor loads — the source "Imagen" in
-    // Twenty can change after a draft was already saved (e.g. it didn't fit and got
-    // swapped), so we shouldn't keep showing whatever was fetched the first time. Text
+    // If this is the primary page of a design linked to a Twenty record (a News or an
+    // Events one), refresh the source image from Twenty every time the editor loads — the
+    // source "Imagen" in Twenty can change after a draft was already saved (e.g. it
+    // didn't fit and got swapped), so we shouldn't keep showing whatever was fetched the
+    // first time. Text
     // content the operator already wrote is left alone; only the background image is
     // replaced. Runs strictly *after* the saved JSON has finished loading below —
     // loadFromJSON replaces the whole canvas, so doing this any earlier would just get
@@ -158,21 +161,21 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
     const refreshFromTwenty = (isBlankPage: boolean) => {
       const twentyRecordId = twentyRecordIdRef.current;
       if (!isPrimaryPageRef.current || !twentyRecordId) return;
-      api<NewsRecord>("GET", `/api/news/${twentyRecordId}`)
-        .then((news) => {
+      api<TwentyRecord>("GET", `/api/twenty/${twentyObjectTypeRef.current}/${twentyRecordId}`)
+        .then((record) => {
           // preserveFraming: the image is re-fetched on every open, so re-fitting it
           // unconditionally would undo any manual repositioning the operator had saved.
-          if (news.imageUrl) {
-            const applied = applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover", {
+          if (record.imageUrl) {
+            const applied = applyBackgroundToCanvas(c, page.id, "image", record.imageUrl, "cover", {
               preserveFraming: true,
             });
             // The refresh swaps the background object, so re-read the effect values from
             // the replacement rather than from the one that was just discarded.
             Promise.resolve(applied).then(() => syncEffectsFromCanvas(c));
           }
-          if (isBlankPage && news.title) applyTextToCanvas(c, "heading", news.title);
+          if (isBlankPage && record.title) applyTextToCanvas(c, "heading", record.title);
         })
-        .catch((e) => console.error("Failed to refresh News image:", e));
+        .catch((e) => console.error("Failed to refresh source image from Twenty:", e));
     };
 
     // Load page content, then add the fixed logo layer on top

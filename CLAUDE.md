@@ -286,7 +286,10 @@ aparte, que el usuario gestiona por su cuenta. Por eso **no hay n8n en este fluj
 descartó el `POST /api/publication/:id/render → webhook n8n` que preveía `PLAN.md` §3,
 porque no existe (ni hace falta) un paso de "publicar" aquí.
 
-### 9.1 Objeto y campos reales en Twenty (verificado por introspección GraphQL en vivo)
+### 9.1 Objetos y campos reales en Twenty (verificado por introspección GraphQL en vivo)
+
+> El editor sirve a **dos** objetos del CRM, no solo a `News` — ver §9.19 para `Events`.
+> Esta sección describe `News`, que fue el primero y sigue siendo el caso por defecto.
 
 - Objeto: **`News`** (query singular `news(filter: {...})`, plural `newss`).
 - `imagen` (Files, puede ser `null`) — imagen de origen. Su URL viene con un **token
@@ -405,11 +408,15 @@ fichero no existe (alguien sin Twenty configurado puede seguir usando el editor 
 
 ### 9.7 Punto de entrada desde Twenty
 
-Campo tipo **Link** en la ficha de `News`, apuntando a:
+Campo tipo **Link** en la ficha del registro, apuntando a:
 
 ```
-https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}&objectType=news    ← News
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}&objectType=event   ← Events
 ```
+
+`objectType` es opcional y por defecto vale `news`, así que los enlaces que ya existían en
+las fichas de noticias (sin ese parámetro) siguen funcionando tal cual — ver §9.19.
 
 `<DOMINIO-DEL-EDITOR>` depende del despliegue de la Fase 4 (ver §11 — dominio público +
 Basic Auth de app, sin middleware de Traefik necesario). **Para probarlo ya, en local:**
@@ -959,6 +966,74 @@ columna ni una fila transparente**; sobrevive a guardar, recargar, añadir una f
 la exportación sigue dando 2160×2160. En el camino real de Twenty (imagen de 1200×819, por
 debajo del tope) no cambia nada: no se reduce, y el reencuadre manual y el blur siguen
 sobreviviendo al refresco automático al reabrir. Sin errores de consola en ningún paso.
+
+### 9.19 Multi-objeto: `News` + `Events`
+
+El editor ya no sirve a un solo objeto de Twenty. Se añadió **`Events`** con exactamente la
+misma mecánica: campo Files **Imagen** como foto de origen y campo Links **Imagen Editada**
+como destino del resultado. Lo único que cambia entre objetos son los nombres de la API de
+GraphQL y de dónde sale el título por defecto, y eso vive en una sola tabla
+(`OBJECTS` en [`src/server/twenty.ts`](src/server/twenty.ts)); todo lo demás — rutas,
+cliente, base de datos — es genérico y solo pasa el tipo por parámetro. Añadir un tercer
+objeto es una entrada más en esa tabla y una en la lista del cliente
+([`src/client/lib/twenty.ts`](src/client/lib/twenty.ts)).
+
+**Nombres reales, confirmados por introspección contra la instancia (no supuestos):**
+
+| | `News` | `Events` |
+|---|---|---|
+| tipo en el editor | `news` | `event` |
+| query singular | `news` | **`eventCustom`** |
+| mutación | `updateNews` | **`updateEventCustom`** |
+| título por defecto | `title` (RichText → `.markdown`) | **`name`** (String) |
+| imagen de origen | `imagen` (Files) | `imagen` (Files) |
+| destino | `imagenEditada` (Links) | `imagenEditada` (Links) |
+
+Los dos sobresaltos están en la columna de `Events`: Twenty expone el objeto personalizado
+con el sufijo **`Custom`** porque `Event` choca con un nombre del núcleo (`event` a secas
+**no existe** en el esquema), y su título es un `String` plano, no un RichText. Ambos son
+justo el tipo de cosa que no se puede adivinar: se introspeccionó el esquema en vivo.
+
+**Cómo viaja el tipo, de punta a punta:**
+
+- **URL de entrada**: `?objectType=news|event` junto a `?recordId=`
+  ([`use-router.ts`](src/client/hooks/use-router.ts)). **Es opcional y por defecto vale
+  `news`**, para que los enlaces que ya existen en las fichas de noticias sigan
+  funcionando sin tocarlos.
+- **Base de datos**: columna nueva `designs.twenty_object_type`, y el índice único pasa de
+  `(twenty_record_id)` a **`(COALESCE(twenty_object_type,'news'), twenty_record_id)`** — la
+  identidad de un borrador es el par (objeto, registro), no el id suelto. Así el
+  *find-or-create* sigue retomando siempre el mismo borrador por registro.
+- **Rutas**: `/api/twenty/:type/:id`, `/api/twenty/:type/:id/image`,
+  `/api/twenty/:type/:id/publish-image` y `POST /api/designs/from-twenty/:type/:recordId`.
+  Un `:type` desconocido responde `400`, no un fallo confuso más adentro.
+- **"Guardar en Twenty"** lee el tipo **del diseño** (`twenty_object_type`), no de la URL:
+  el operador puede haber llegado al borrador desde la galería y no desde el enlace.
+
+**Dos migraciones que `schema.sql` NO puede hacer solo**, y por eso viven en
+[`db.ts`](src/server/db.ts): el fichero es idempotente (`CREATE ... IF NOT EXISTS`), lo que
+sirve para crear la base desde cero pero no para *cambiar* algo ya existente — una columna
+nueva no aparece en una tabla ya creada, y un índice que cambia de definición **se ignora en
+silencio** porque su nombre ya está ocupado. Al arrancar se añade la columna si falta y se
+rehace el índice si su SQL todavía no menciona la columna nueva (se detecta por su
+definición, no por un número de versión).
+
+**Compatibilidad con lo ya guardado.** Se conservan `GET /api/news/:id` y
+`GET /api/news/:id/image` como alias de `type=news`, y no por cortesía: la URL del proxy
+queda grabada como `src` del fondo **dentro del `canvas_json`** de cada borrador ya
+guardado, así que quitarla dejaría esos diseños sin fondo al abrirlos. Los diseños
+anteriores tampoco tienen tipo (`NULL`), de ahí el `COALESCE` tanto en el índice como en la
+consulta del *find-or-create*.
+
+**Verificado contra el build de producción** (`:8788`, con CSP real — §10.3) y contra el
+Twenty real, no solo `tsc`: la migración sobre una base creada con el **esquema antiguo** y
+un borrador de noticia dentro (columna añadida, índice rehecho, fila intacta); ese borrador
+antiguo se retoma —no se duplica— y abre su fondo por el alias heredado, sin ningún 4xx ni
+error de consola; un evento abre desde `?recordId=…&objectType=event` con su foto y su
+`name` como titular; "Guardar en Twenty" escribe en `imagenEditada` del **evento**
+(confirmado leyéndolo de vuelta por GraphQL) y el borrador se retoma igual al reabrir; un
+`:type` inventado da `400` en las cuatro rutas. Las escrituras de prueba en `imagenEditada`
+(un evento y una noticia) se revirtieron a vacío después, como siempre.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

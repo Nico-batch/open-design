@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "preact/hooks";
 import type { Design, DesignWithPages, Template, Page } from "../types";
 import { api } from "../api";
+import { coerceTwentyObjectType, type TwentyObjectType } from "../lib/twenty";
 
 export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -66,18 +67,23 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     }
   }, [getCanvasJSONForPage, pages]);
 
-  // Uploads the exported PNG and writes its public URL into the linked News record's
-  // "Imagen Editada" field in Twenty. Does not save the design or publish to social
-  // media — those are separate, unrelated steps.
+  // Uploads the exported image and writes its public URL into the linked Twenty record's
+  // "Imagen Editada" field — the record can be a News or an Events one, so the object
+  // type saved on the design decides which object gets updated. Does not save the design
+  // or publish to social media — those are separate, unrelated steps.
   const publishToTwenty = useCallback(
     async (pngBlob: Blob): Promise<string | undefined> => {
       const recordId = activeDesign?.twenty_record_id;
-      if (!recordId) throw new Error("Este diseño no está vinculado a una noticia de Twenty");
+      if (!recordId) throw new Error("Este diseño no está vinculado a ningún registro de Twenty");
+      const objectType = coerceTwentyObjectType(activeDesign?.twenty_object_type);
       const form = new FormData();
       form.append("file", pngBlob, "design.png");
       let resp: Response;
       try {
-        resp = await fetch(`/api/news/${recordId}/publish-image`, { method: "POST", body: form });
+        resp = await fetch(`/api/twenty/${objectType}/${recordId}/publish-image`, {
+          method: "POST",
+          body: form,
+        });
       } catch {
         // fetch() itself rejected — a real network failure (server down/unreachable,
         // connection dropped mid-upload), not an HTTP error status. Surface something
@@ -126,21 +132,28 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     }
   }, [activateCreatedDesign]);
 
-  // Entry point from Twenty (?recordId=...). Finds the design already linked to this
-  // News record, or creates one — same "News" record always resumes the same draft.
-  const openFromNewsRecord = useCallback(async (recordId: string): Promise<string | undefined> => {
-    try {
-      const full = await api<DesignWithPages>("POST", `/api/designs/from-news/${recordId}`);
-      setDesigns((prev) => (prev.some((d) => d.id === full.id) ? prev : [full, ...prev]));
-      activeIdRef.current = full.id;
-      setActiveDesign(full);
-      setPages(full.pages);
-      setActivePageId(full.pages[0]?.id ?? null);
-      return full.id;
-    } catch (e) {
-      console.error("Failed to open design from News record:", e);
-    }
-  }, []);
+  // Entry point from Twenty (?recordId=...&objectType=...). Finds the design already
+  // linked to that record, or creates one — the same record always resumes the same
+  // draft. The pair (objeto, registro) is the key: News and Events are separate objects.
+  const openFromTwentyRecord = useCallback(
+    async (recordId: string, objectType: TwentyObjectType): Promise<string | undefined> => {
+      try {
+        const full = await api<DesignWithPages>(
+          "POST",
+          `/api/designs/from-twenty/${objectType}/${recordId}`
+        );
+        setDesigns((prev) => (prev.some((d) => d.id === full.id) ? prev : [full, ...prev]));
+        activeIdRef.current = full.id;
+        setActiveDesign(full);
+        setPages(full.pages);
+        setActivePageId(full.pages[0]?.id ?? null);
+        return full.id;
+      } catch (e) {
+        console.error("Failed to open design from Twenty record:", e);
+      }
+    },
+    []
+  );
 
   const createFromTemplate = useCallback(async (template: Template): Promise<string | undefined> => {
     try {
@@ -294,7 +307,7 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     saving,
     createDesign,
     createFromTemplate,
-    openFromNewsRecord,
+    openFromTwentyRecord,
     loadDesign,
     saveDesign,
     publishToTwenty,
