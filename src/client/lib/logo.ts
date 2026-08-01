@@ -1,8 +1,10 @@
 import * as fabric from "fabric";
 
-// Brand logo (faro/lighthouse, blanco sobre negro, 1024x1024). To replace, drop the new
-// file at public/logo.jpg (or update this path) — no other changes needed.
-export const LOGO_URL = "/logo.jpg";
+// Brand logo (faro/lighthouse, blanco, fondo transparente). To replace, drop the new
+// file at public/logo.png (or update this path) — no other changes needed. Needs a real
+// alpha channel (RGBA) — a flat JPG here would show an opaque box behind the logo on top
+// of whatever background image is underneath.
+export const LOGO_URL = "/logo.png";
 
 const MAX_WIDTH_RATIO = 0.18;
 const MAX_WIDTH_PX = 220;

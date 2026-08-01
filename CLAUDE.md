@@ -156,7 +156,7 @@ src/
 
 public/
 ├── fonts/<Familia>/<peso>.woff2   — fuentes autoalojadas (servidas por Vite/estático)
-└── logo.jpg                       — logo de marca (faro blanco sobre negro, 1024x1024)
+└── logo.png                       — logo de marca (faro blanco, fondo transparente, 500x500)
 
 Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 ```
@@ -166,7 +166,7 @@ Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 | Tarea del plan | Estado / dónde vive |
 |---|---|
 | Presets de tamaño IG (1080×1080, 1080×1350, 1080×1920) | Hecho — [`src/client/context.tsx`](src/client/context.tsx) `CANVAS_SIZES`. Las 4 medidas LinkedIn se quitaron. |
-| Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.jpg`, faro blanco sobre negro) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica. |
+| Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.png`, faro blanco, fondo transparente) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica; el archivo debe tener canal alfa real (RGBA), un JPG opaco se ve como un cuadro sólido encima del fondo. |
 | Negrita en selección (estilos por carácter) | Hecho — `toggleBold` en [`use-canvas.ts`](src/client/hooks/use-canvas.ts). Si el `Textbox`/`IText` está en edición con un rango de caracteres seleccionado, aplica `setSelectionStyles({fontWeight}, start, end)` (Fabric v6, per-character); si no, alterna el `fontWeight` del objeto entero (comportamiento previo). Verificado end-to-end: el `canvas_json` guardado incluye `styles: [{start, end, style: {fontWeight: "700"}}]` solo en el rango seleccionado. |
 | Fuentes autoalojadas | Hecho — `public/fonts/<Familia>/<peso>.woff2` (36 archivos, solo subset *latin*, cubre acentos/ñ del español) + [`src/client/fonts.css`](src/client/fonts.css) (`@font-face` generado, importado desde `main.tsx`). Se quitó `WebFont.load` de `app.tsx`, el `<link>` de Google Fonts de `index.html`, y la dependencia `webfontloader`. |
 | Encaje imagen origen (cover/contain) | Hecho — `fitBackgroundImage` en `use-canvas.ts`, con `setBackground(type, value, fit)` y `setBackgroundImageFit(fit)` para cambiar el encaje sin re-subir. UI: dos botones Cover/Contain en `left-sidebar.tsx` (sección Bg). El color de fondo del canvas ya sirve de "letterbox" para `contain`. |
@@ -246,9 +246,13 @@ negrita por selección con persistencia correcta, cover/contain — todo probado
 sin errores de consola. `data.db`/`data.db-wal`/`data.db-shm` se limpiaron antes de dejar el
 repo (se recrean solos al arrancar).
 
-**Logo de marca:** ya integrado — `public/logo.jpg` (faro blanco sobre negro, 1024x1024,
-provisto por el usuario desde `img_custom/logow.jpg`, ahora en `.gitignore` porque tiene
-otros archivos personales sueltos, no solo el logo).
+**Logo de marca:** `public/logo.png` (faro blanco, **fondo transparente**, 500×500 RGBA,
+provisto por el usuario desde `img_custom/logow-removebg.png`, ahora en `.gitignore`
+porque tiene otros archivos personales sueltos, no solo el logo). Reemplaza a la versión
+inicial en JPG (`logo.jpg`, fondo negro) — un JPG no tiene canal alfa, así que se veía
+como un cuadro negro opaco encima de la imagen de fondo en vez de solo el faro. `logo.ts`
+exige que el archivo tenga transparencia real (RGBA); si se vuelve a cambiar el logo,
+confirmar que el nuevo export también la tiene.
 
 **Fase 3 completa** (seguridad/hardening a nivel app, ver §10).
 
@@ -395,14 +399,57 @@ Campo tipo **Link** en la ficha de `News`, apuntando a:
 https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}
 ```
 
-`<DOMINIO-DEL-EDITOR>` depende del despliegue de la Fase 4 (todavía no decidido — VPN vs.
-basic auth vs. SSO, dominio propio o interno). **Para probarlo ya, en local:**
+`<DOMINIO-DEL-EDITOR>` depende del despliegue de la Fase 4 (ver §11 — dominio público +
+Basic Auth de app, sin middleware de Traefik necesario). **Para probarlo ya, en local:**
 `http://localhost:5173/edit?recordId=<id>` (con `pnpm run dev` corriendo) — funciona igual
 que en producción salvo que el campo `imagenEditada` no será accesible desde fuera de esta
 máquina hasta que exista el dominio real. Rellenar el campo Link con el `id` de cada
 registro es manual por ahora (bajo volumen, per lo que dijo el usuario sobre el campo de
 estado); automatizarlo con un Workflow de Twenty (fórmula `CONCAT` sobre `record.id`) es
 un afinado de Fase 5, no bloqueante.
+
+### 9.8 Manejo de errores de red más robusto (`api.ts`, `use-designs.ts`, `twenty.ts`)
+
+Tras un reporte del usuario de un `Failed to fetch` genérico al pulsar "Guardar en
+Twenty", que no se pudo reproducir de forma determinista (probado varias veces contra el
+Twenty real, siempre completó correctamente) — la teoría más plausible es una colisión
+de puertos/proceso: durante esta misma sesión se reinició el servidor de dev
+(`:5173`/`:8787`) muchas veces para pruebas de Docker y de la Fase 4, así que si había una
+pestaña del navegador abierta contra esos mismos puertos en ese momento, una petición
+podía caer justo cuando el servidor estaba reiniciando — eso sí produce un `Failed to
+fetch` real (fallo de conexión), sin ser un bug de la app.
+
+Aun así, la investigación destapó un bug real y independiente: **cualquier respuesta de
+error que no sea JSON rompía el manejo de errores en el cliente.** El Basic Auth de Hono
+devuelve el cuerpo de un `401` como texto plano (`"Unauthorized"`), no JSON — tanto
+`api()` (`src/client/api.ts`) como `publishToTwenty` (`src/client/hooks/use-designs.ts`)
+hacían `await r.json()` sin capturar el fallo de parseo, así que un `401` (sesión
+caducada, credenciales incorrectas, etc.) se mostraba como
+`SyntaxError: Unexpected token 'U', "Unauthorized" is not valid JSON` en vez de un
+mensaje explicable. Reproducido y confirmado con Playwright usando credenciales
+incorrectas a propósito.
+
+Arreglado en los tres sitios que hablan con el exterior:
+- `src/client/api.ts` (`api()`, usado por casi todo el frontend): `fetch()` envuelto en
+  `try/catch` (fallo de red real → mensaje claro en vez de dejar pasar el `TypeError`
+  crudo de "Failed to fetch"); `r.json()` envuelto en `try/catch` (respuesta no-JSON no
+  rompe nada); `401` específicamente → "Sesión expirada o credenciales inválidas —
+  recarga la página e inicia sesión de nuevo."
+- `src/client/hooks/use-designs.ts` (`publishToTwenty`): mismo patrón, no reutiliza
+  `api()` directamente porque manda `multipart/form-data` (un `Blob`), no JSON.
+- `src/server/twenty.ts` (`twentyGraphQL`, usado por `fetchNews` y
+  `setNewsEditedImage`): se le añadió `signal: AbortSignal.timeout(15000)`. Sin esto, una
+  Twenty lenta o caída dejaba la petición del servidor colgada indefinidamente — el
+  navegador nunca recibe respuesta hasta que algún timeout intermedio (el proxy de Vite
+  en dev, Traefik en producción) corta la conexión por su cuenta, lo cual desde el
+  cliente se ve exactamente como un `Failed to fetch` sin ninguna pista de la causa real.
+  Ahora falla rápido con un mensaje explícito ("Twenty no respondió a tiempo").
+
+Verificado con Playwright: con credenciales correctas, "Guardar en Twenty" sigue
+completando con éxito (probado dos veces contra el Twenty real — **ambas escrituras de
+prueba en `imagenEditada` se revirtieron a vacío después**, mismo procedimiento que en
+§9.5); con credenciales incorrectas a propósito, el error ahora es el mensaje de sesión
+expirada, no el `SyntaxError` de antes.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

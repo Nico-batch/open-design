@@ -75,10 +75,28 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
       if (!recordId) throw new Error("Este diseño no está vinculado a una noticia de Twenty");
       const form = new FormData();
       form.append("file", pngBlob, "design.png");
-      const resp = await fetch(`/api/news/${recordId}/publish-image`, { method: "POST", body: form });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || "No se pudo publicar en Twenty");
-      return data.url as string;
+      let resp: Response;
+      try {
+        resp = await fetch(`/api/news/${recordId}/publish-image`, { method: "POST", body: form });
+      } catch {
+        // fetch() itself rejected — a real network failure (server down/unreachable,
+        // connection dropped mid-upload), not an HTTP error status. Surface something
+        // actionable instead of letting the bare "Failed to fetch" TypeError bubble up.
+        throw new Error("No se pudo conectar con el servidor. Comprueba tu conexión y que el editor siga accesible, y vuelve a intentarlo.");
+      }
+      // Some failure responses (e.g. 401 from Basic Auth) aren't JSON — don't let a
+      // parse error on those mask the real status.
+      let data: { error?: string; url?: string } = {};
+      try {
+        data = await resp.json();
+      } catch {
+        // leave data empty; fall through to the status-based message below
+      }
+      if (!resp.ok) {
+        if (resp.status === 401) throw new Error("Sesión expirada o credenciales inválidas — recarga la página e inicia sesión de nuevo.");
+        throw new Error(data.error || `No se pudo publicar en Twenty (error ${resp.status})`);
+      }
+      return data.url;
     },
     [activeDesign]
   );

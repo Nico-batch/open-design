@@ -5,14 +5,28 @@ async function twentyGraphQL<T>(query: string, variables: Record<string, unknown
   if (!TWENTY_API_URL || !TWENTY_TOKEN) {
     throw new Error("TWENTY_API_URL/TWENTY_TOKEN no configurados en el servidor");
   }
-  const res = await fetch(`${TWENTY_API_URL}/graphql`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${TWENTY_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${TWENTY_API_URL}/graphql`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TWENTY_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables }),
+      // Sin esto, una Twenty lenta/caída deja la request del navegador colgada
+      // indefinidamente (nuestro handler nunca responde) en vez de fallar rápido con un
+      // 502 explicable — un timeout intermedio (proxy de Vite en dev, Traefik en prod)
+      // acabaría cortando la conexión igualmente, pero como un fallo de red genérico
+      // ("Failed to fetch" en el cliente) sin ninguna pista de la causa real.
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === "TimeoutError") {
+      throw new Error("Twenty no respondió a tiempo (timeout de 15s)");
+    }
+    throw new Error(`No se pudo conectar con Twenty: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
   if (json.errors?.length) {
     throw new Error(`Twenty GraphQL error: ${json.errors.map((e) => e.message).join("; ")}`);
