@@ -2,7 +2,7 @@ import { useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
-import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
+import { findBackgroundImage, makeBackgroundInteractive, downscaleOversizedSource } from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { api } from "../api";
@@ -186,7 +186,14 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
           // `selectable: false` baked into their JSON — unlock those so the operator can
           // reframe them too, not just newly created ones.
           const bg = findBackgroundImage(c);
-          if (bg) makeBackgroundInteractive(bg);
+          if (bg) {
+            makeBackgroundInteractive(bg);
+            // Rebuilt from its saved URL, so it's back at full camera resolution and would
+            // truncate under the filter pipeline again (lib/background.ts). Doing it here,
+            // before the Twenty refresh below, also means both images are at the same
+            // resolution when the framing gets carried across.
+            downscaleOversizedSource(bg);
+          }
           await applyLogoToCanvas(c, width, height);
           c.requestRenderAll();
           // Saved text was measured against whatever font was available when it was

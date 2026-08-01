@@ -889,6 +889,77 @@ verificó recorriendo el DOM ya renderizado en busca de superficies claras: los 
 resultados son los dos casos intencionados de arriba. Capturas del editor y de la galería
 revisadas, sin errores de consola.
 
+### 9.18 El blur borraba parte de la foto: el límite de textura de Fabric
+
+Reporte del usuario, con captura: al aplicar blur, la franja derecha de la imagen
+desaparecía y quedaba un bloque plano. No era un problema de encuadre — la foto llegaba
+recortada al lienzo.
+
+**Causa.** Fabric renderiza los filtros en un lienzo WebGL de **`config.textureSize`
+(4096 px) por lado**, creado una sola vez, y fija el viewport al tamaño del bitmap de
+origen. El driver recorta ese viewport al tamaño real del buffer, así que **todo lo que
+pase de 4096 px vuelve completamente transparente**, en silencio y sin ningún error. Una
+foto de cámara de 5184×3456 (18 MP, lo normal en lo que llega desde Twenty) pierde así el
+21% derecho en cuanto se enciende el blur o el oscurecido — que es exactamente la
+proporción de la captura del usuario.
+
+Medido directamente sobre el bitmap filtrado, con imágenes sintéticas de varios tamaños:
+
+| origen | primera columna vacía | cubierto |
+|---|---|---|
+| 3000×2000 | — | 100% |
+| 4500×3000 | 4096 | 91% |
+| 5184×3456 | 4096 | 79% |
+| 2000×4600 | fila 4096 | recorta por abajo |
+
+**Arreglo: reducir el bitmap de origen a 4096 px de lado**
+(`downscaleOversizedSource` en [`lib/background.ts`](src/client/lib/background.ts)). Se
+descartó subir `textureSize` (el lienzo WebGL es `textureSize²`: pasarlo a 8192 son 268 MB
+de VRAM, y aun así no garantiza nada — el máximo depende de la GPU) y también desactivar
+`enableGLFiltering` (el blur en 2D son ~30 muestras por píxel y dos pasadas en JS: sobre 18
+MP es inusable). Reducir es además lo correcto por sí solo: la página mide como mucho
+1920 px y se exporta a 2×, así que un bitmap de 5000 px ya se estaba submuestreando al
+pintar — solo costaba memoria y tiempo de filtrado. El tope se deriva de
+`fabric.config.textureSize` en lugar de escribirse a mano, para que los dos no se separen.
+
+Tres detalles que costaron una vuelta cada uno:
+
+- **La escala se convierte, no se resetea.** Cambiar el bitmap encogería el objeto en la
+  página, así que se multiplica `scaleX/scaleY` por lo que perdió el bitmap. La
+  compensación se mide sobre **`img.width` (el objeto), no sobre el elemento**: un diseño
+  restaurado desde JSON vuelve con el `width` *serializado* (ya reducido, si se guardó tras
+  este cambio) pero con el elemento a resolución completa, así que medir el elemento
+  duplicaba la cuenta y agrandaba el fondo un 26% en cada recarga.
+- **Se reduce `_originalElement`, no `getElement()`.** Este último devuelve el bitmap *ya
+  filtrado* cuando hay efectos activos — que al recargar es precisamente el truncado.
+  Reducir ese dejaba la franja que falta grabada para siempre en vez de curarla (se veía
+  como un hueco que además se movía al cambiar la intensidad del blur, porque el
+  desenfoque arrastraba el borde).
+- **`getSrc()` se sobrescribe en el prototipo.** Fabric serializa una imagen llamando a
+  `getSrc()`, que **incrusta el bitmap entero como data URL en base64 en cuanto el elemento
+  de respaldo es un canvas** — y reducir la imagen lo convierte justo en eso. Sin esto,
+  guardar escribía megabytes de base64 en `canvas_json` en lugar de una URL. Solo actúa
+  sobre imágenes cuyo elemento hemos sustituido (marcadas con `_srcUrl`); el resto conserva
+  el comportamiento de Fabric. Verificado: el `canvas_json` guardado son 774 bytes, sin
+  `data:image`.
+
+Se aplica en las **cuatro** entradas de una imagen al lienzo, no solo en la subida:
+`applyBackgroundToCanvas` (subida manual y refresco desde Twenty) y las tres rutas que
+reconstruyen el fondo desde su `src` guardado — `page-canvas.tsx`, `restoreFromHistory` y
+`loadTemplate`. Faltando cualquiera de ellas, el recorte reaparece al recargar o al
+deshacer, que es como se detectó (`normalizeBackgroundSource` es el envoltorio para esas
+tres, igual que `applyWorkspaceClip` en §9.16 — mismo patrón, misma causa de fondo:
+`loadFromJSON` devuelve el lienzo a su estado *serializado*, no al estado en memoria).
+
+Verificado contra el **build de producción** (`:8787`, con CSP real — §10.3) con una foto
+sintética de 5184×3456: se reduce a 4096×2731 y se muestra a 1620×1080 en (-270, 0), que es
+el *cover* exacto de una foto 3:2 en una página cuadrada; con blur al 25% **no queda ni una
+columna ni una fila transparente**; sobrevive a guardar, recargar, añadir una forma,
+**Ctrl+Z** y volver a mover el blur al 35%, siempre con un único fondo y la misma geometría;
+la exportación sigue dando 2160×2160. En el camino real de Twenty (imagen de 1200×819, por
+debajo del tope) no cambia nada: no se reduce, y el reencuadre manual y el blur siguen
+sobreviviendo al refresco automático al reabrir. Sin errores de consola en ningún paso.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

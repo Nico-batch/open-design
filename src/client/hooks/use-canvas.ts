@@ -2,7 +2,12 @@ import { useState, useCallback, useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import type { Template } from "../types";
 import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
-import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
+import {
+  findBackgroundImage,
+  makeBackgroundInteractive,
+  downscaleOversizedSource,
+  normalizeBackgroundSource,
+} from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 import {
@@ -339,6 +344,11 @@ export function useCanvasState() {
         saveHistory(pageId);
       } else if (type === "image") {
         return fabric.FabricImage.fromURL(value, { crossOrigin: "anonymous" }).then((img) => {
+          // Camera-sized photos have to be brought under the filter pipeline's texture
+          // limit before anything else touches them, or blur/darken silently blank out
+          // whatever sticks past 4096 px — see lib/background.ts.
+          downscaleOversizedSource(img);
+
           // findBackgroundImage (not a raw `_isBgImage` lookup) so a background restored
           // from a design saved before the marker was serialized is still recognised and
           // replaced, instead of leaving a stale copy underneath.
@@ -572,6 +582,8 @@ export function useCanvasState() {
         // loadFromJSON wipes the clip path (see applyWorkspaceClip) — without this, undo
         // left the design painting across the whole workspace and the page disappeared.
         applyWorkspaceClip(canvas, canvasWidth, canvasHeight);
+        // The background is rebuilt from its saved URL, i.e. at full resolution again.
+        normalizeBackgroundSource(canvas);
         await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
         canvas.requestRenderAll();
         syncCanvasFonts(canvas);
@@ -730,6 +742,7 @@ export function useCanvasState() {
         isRestoringRef.current.add(pageId);
         canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
           applyWorkspaceClip(canvas, template.width, template.height);
+          normalizeBackgroundSource(canvas);
           await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();
           syncCanvasFonts(canvas);
