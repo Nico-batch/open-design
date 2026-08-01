@@ -35,6 +35,51 @@ export function RightSidebar() {
   const isBackground = isBackgroundImage(selectedObject);
   const isShape = selectedObject && !isText && !isImage;
 
+  // Fabric defaults strokeWidth to 1 with stroke:null, so width alone doesn't tell you
+  // whether there's an outline — without checking the colour too, the panel would claim
+  // "1px" on text that has none.
+  const hasOutline = !!selectedObject?.stroke && ((selectedObject?.strokeWidth as number) ?? 0) > 0;
+  const outlineWidth = hasOutline ? (selectedObject!.strokeWidth as number) : 0;
+  const outlineColor = ((selectedObject?.stroke as string) || "#000000").toString();
+
+  /**
+   * Applies a text outline the way it actually needs to be done, rather than just setting
+   * `stroke`:
+   *
+   *  - `paintFirst: "stroke"` — by default Fabric paints the fill and *then* the stroke on
+   *    top, so half the outline's width eats into the glyph and the letters come out
+   *    thinner and muddier the heavier the outline. Painting the stroke first leaves the
+   *    fill covering its inner half, which is what makes an outline read cleanly.
+   *  - `strokeLineJoin: "round"` — a miter join throws long spikes off the sharp corners of
+   *    letters like A, V or W once the outline gets thick.
+   *  - `strokeUniform: true` — keeps the outline an even thickness if the text box is
+   *    scaled, instead of stretching with it.
+   *
+   * Picking a colour while the outline is off turns it on at a width proportional to the
+   * font size, so the colour swatch does something visible instead of nothing.
+   */
+  const applyOutline = ({ color, width }: { color?: string; width?: number }) => {
+    if (!selectedObject) return;
+    const fontSize = ((selectedObject as any).fontSize as number) || 48;
+    const nextWidth =
+      width ?? (outlineWidth > 0 ? outlineWidth : Math.max(2, Math.round(fontSize * 0.06)));
+
+    // Dragging the width to 0 clears the colour too, so "off" is genuinely off rather
+    // than a zero-width stroke lingering on the object.
+    if (nextWidth === 0) {
+      updateSelectedObject({ stroke: null, strokeWidth: 0 });
+      return;
+    }
+
+    updateSelectedObject({
+      stroke: color ?? outlineColor,
+      strokeWidth: nextWidth,
+      paintFirst: "stroke",
+      strokeLineJoin: "round",
+      strokeUniform: true,
+    });
+  };
+
   if (!selectedObject) {
     return (
       <aside class="w-[280px] bg-white border-l border-zinc-200 flex flex-col shrink-0">
@@ -215,6 +260,41 @@ export function RightSidebar() {
                   }
                 />
               </div>
+            </div>
+
+            {/* Outline — the other half of the legibility toolkit (lib/effects.ts covers
+                the photo side): a contrasting outline keeps text readable over a busy
+                image without darkening the whole picture. */}
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                Outline
+                <span class="text-zinc-400 font-mono">
+                  {outlineWidth > 0 ? `${outlineWidth}px` : "off"}
+                </span>
+              </label>
+              <div class="flex items-center gap-2 mb-2">
+                <input
+                  type="color"
+                  class="w-8 h-8 rounded border border-zinc-300 cursor-pointer bg-transparent shrink-0"
+                  value={outlineColor}
+                  onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
+                />
+                <input
+                  type="text"
+                  class="flex-1 bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent font-mono"
+                  value={outlineColor}
+                  onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
+                />
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="20"
+                step="0.5"
+                class="w-full accent-accent"
+                value={outlineWidth}
+                onInput={(e) => applyOutline({ width: parseFloat((e.target as HTMLInputElement).value) })}
+              />
             </div>
 
             {/* Line height */}

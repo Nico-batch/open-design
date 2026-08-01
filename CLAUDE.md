@@ -770,6 +770,44 @@ sobre el fondo, el velo se inserta en el orden correcto (`bg → scrim → texto
 exportación no se rompe (2160×2160), y tras guardar y recargar sobreviven los tres ajustes.
 Sin errores de consola.
 
+### 9.15 Contorno del texto
+
+La otra mitad de la legibilidad (§9.14 cubre el lado de la foto): un contorno de color
+contrastado mantiene el texto legible sobre una imagen recargada **sin apagar la foto
+entera**. Control en el panel derecho, sección Text: selector de color + hex y un slider de
+grosor (0 = apagado).
+
+No hace falta nada a medida en el modelo de datos: `stroke`, `strokeWidth`, `paintFirst`,
+`strokeLineJoin` y `strokeUniform` son propiedades estándar de Fabric y se serializan
+solas. Lo que sí importa es **cómo** se aplican, y por eso hay un helper `applyOutline` en
+`right-sidebar.tsx` en vez de un `updateSelectedObject({ stroke })` pelado:
+
+- **`paintFirst: "stroke"`** — por defecto Fabric pinta el relleno y **luego** el trazo
+  encima, así que la mitad del grosor del contorno se come el interior del glifo y las
+  letras salen más finas y embarradas cuanto más grueso es el contorno. Pintando el trazo
+  primero, el relleno tapa su mitad interior, que es lo que hace que un contorno se lea
+  limpio.
+- **`strokeLineJoin: "round"`** — con el `miter` por defecto salen picos largos en las
+  esquinas afiladas de letras como A, V o W en cuanto el contorno engorda.
+- **`strokeUniform: true`** — mantiene el grosor constante si se escala la caja de texto,
+  en vez de estirarse con ella.
+
+Dos detalles de UI que evitan estados confusos:
+
+- Fabric arranca con `strokeWidth: 1` y `stroke: null`, así que el grosor por sí solo no
+  dice si hay contorno: el panel comprueba **también el color**, o mostraría "1px" en un
+  texto que no tiene ninguno.
+- Elegir un color con el contorno apagado lo enciende con un grosor proporcional al cuerpo
+  de la letra (`max(2, fontSize * 0.06)`), para que el selector de color haga algo visible
+  en vez de nada. Bajar el grosor a 0 limpia también el color, para que "apagado" sea
+  apagado de verdad y no un trazo de grosor cero acechando en el objeto.
+
+Verificado contra el **build de producción**: el panel reporta "off" en texto sin contorno
+(no el `1px` de Fabric); elegir negro lo activa a 3px sobre un cuerpo de 48 con
+`paintFirst/lineJoin/strokeUniform` correctos; el slider ajusta el grosor; la exportación
+sigue dando 2160×2160; sobrevive a guardar y recargar; y volver a 0 deja `stroke: null`.
+Sin errores de consola.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del
