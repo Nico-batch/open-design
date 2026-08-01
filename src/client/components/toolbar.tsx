@@ -28,7 +28,7 @@ export function Toolbar() {
     zoomIn,
     zoomOut,
     exportPNG,
-    exportPNGBlob,
+    exportUploadBlob,
     saveDesign,
     publishToTwenty,
     saving,
@@ -47,8 +47,8 @@ export function Toolbar() {
     setPublishing(true);
     setPublishError(null);
     try {
-      const blob = await exportPNGBlob();
-      if (!blob) throw new Error("No se pudo exportar el PNG");
+      const blob = await exportUploadBlob();
+      if (!blob) throw new Error("No se pudo exportar la imagen");
       await publishToTwenty(blob);
     } catch (e) {
       setPublishError(e instanceof Error ? e.message : "Error al publicar en Twenty");

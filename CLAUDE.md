@@ -361,8 +361,16 @@ con índice único (parcial, solo cuando no es `NULL`) — un diseño por notici
   duplicarse, y `bgSrc` del objeto de fondo en el canvas sigue apuntando al proxy
   correcto — sin errores de consola.
 - Botón **"Guardar en Twenty"** en el toolbar (visible solo si el diseño tiene
-  `twenty_record_id`): exporta el PNG (`exportPNGBlob`, nueva variante de `exportPNG` que
-  devuelve un `Blob` en vez de forzar la descarga) y lo sube vía `publish-image`.
+  `twenty_record_id`): exporta la imagen (`exportUploadBlob` en `use-canvas.ts`, devuelve
+  un `Blob` en vez de forzar la descarga) y la sube vía `publish-image`. **JPEG, no
+  PNG** (a diferencia del botón "Export" normal, que sigue en PNG) — el canvas siempre
+  tiene fondo opaco (color o imagen con cover/contain), así que no hay transparencia que
+  perder, y un PNG 2x de un diseño con foto de fondo puede pesar 5-10+ MB, mucho más
+  frágil en producción (memoria del contenedor, proxies de por medio) que el mismo diseño
+  en JPEG (`quality: 0.92`) — verificado: el mismo diseño de prueba pasó de 6.5 MB en PNG
+  a 750 KB en JPEG. El servidor (`POST /api/news/:id/publish-image`) detecta el mime real
+  del blob recibido (`file.type`) en vez de asumir PNG, así que sigue funcionando si
+  algún día se manda otro formato.
 
 ### 9.5 Verificado end-to-end contra el Twenty real (`crm.elfarodealicante.com`)
 
@@ -450,6 +458,33 @@ completando con éxito (probado dos veces contra el Twenty real — **ambas escr
 prueba en `imagenEditada` se revirtieron a vacío después**, mismo procedimiento que en
 §9.5); con credenciales incorrectas a propósito, el error ahora es el mensaje de sesión
 expirada, no el `SyntaxError` de antes.
+
+**Seguimiento:** el usuario reportó que el `Failed to fetch` seguía pasando **ya
+desplegado en Dokploy** (no en local), y solo en "Guardar en Twenty" — el "Save" normal
+(JSON, sin archivo) funcionaba bien. Eso apunta a algo específico de subir un archivo
+grande en producción (memoria del contenedor, límite de un proxy intermedio), no a
+autenticación ni conectividad general. No hay acceso directo al VPS/Dokploy del usuario
+para confirmar la causa exacta con logs, así que se atacó el factor de riesgo más
+controlable desde el código: el tamaño del archivo — ver §9.9. Si el error persiste tras
+ese cambio, el siguiente paso es pedir los logs de la Application en Dokploy justo en el
+momento del fallo (para ver si el contenedor se reinicia/OOM-kill o si hay un error de
+Traefik).
+
+### 9.9 Export a JPEG (no PNG) para "Guardar en Twenty"
+
+`exportUploadBlob` en `use-canvas.ts` (antes `exportPNGBlob`) exporta con
+`format: "jpeg", quality: 0.92` en vez de PNG. El canvas siempre tiene fondo opaco (color
+o imagen en cover/contain), así que no hay transparencia que perder. Un PNG 2x de un
+diseño con foto de fondo puede pesar 5-10+ MB; el mismo diseño en JPEG calidad 0.92 es
+una fracción de eso sin pérdida visible — verificado con el mismo diseño de prueba: 6.5
+MB en PNG → 750 KB en JPEG. El botón "Export" normal (descarga manual) no se tocó, sigue
+en PNG.
+
+`POST /api/news/:id/publish-image` (`src/server/index.ts`) ya no asume `.png`/
+`image/png` al guardar — detecta el mime real del archivo recibido (`file.type`) y usa
+`.jpg`/`image/jpeg` salvo que de verdad sea un PNG, así que sigue funcionando igual si
+algún día se manda otro formato. Verificado con `curl -D -`: el archivo subido responde
+con `Content-Type: image/jpeg` y `Content-Disposition: inline; filename="....jpg"`.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

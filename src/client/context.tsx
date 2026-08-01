@@ -56,7 +56,7 @@ export interface EditorContextValue {
   zoomIn: () => void;
   zoomOut: () => void;
   exportPNG: () => void;
-  exportPNGBlob: () => Promise<Blob | null>;
+  exportUploadBlob: () => Promise<Blob | null>;
   getCanvasJSON: () => string;
   getCanvasJSONForPage: (pageId: string) => string;
   loadTemplate: (template: Template) => void;

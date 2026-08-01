@@ -477,14 +477,18 @@ export function useCanvasState() {
   // ── Export ──────────────────────────────────────────────────────────
 
   const withExportDataURL = useCallback(
-    <T,>(fn: (dataURL: string) => T): T | undefined => {
+    <T,>(fn: (dataURL: string) => T, options?: { format?: "png" | "jpeg"; quality?: number }): T | undefined => {
       const canvas = getActiveCanvas();
       if (!canvas) return undefined;
       const activeObj = canvas.getActiveObject();
       canvas.discardActiveObject();
       canvas.requestRenderAll();
 
-      const dataURL = canvas.toDataURL({ format: "png", multiplier: 2, quality: 1 });
+      const dataURL = canvas.toDataURL({
+        format: options?.format ?? "png",
+        multiplier: 2,
+        quality: options?.quality ?? 1,
+      });
       const result = fn(dataURL);
 
       if (activeObj) {
@@ -505,8 +509,13 @@ export function useCanvasState() {
     });
   }, [withExportDataURL]);
 
-  const exportPNGBlob = useCallback(async (): Promise<Blob | null> => {
-    const dataURL = withExportDataURL((d) => d);
+  // JPEG, not PNG: this feeds "Guardar en Twenty", and the canvas background is always
+  // opaque (color or a cover/contain-fit image), so there's no transparency to lose.
+  // A 2x PNG export of a photo-heavy design can run 5-10+ MB; the same design as JPEG is
+  // typically a fraction of that with no visible quality loss — much less likely to trip
+  // upload size caps, proxy limits, or the container's memory budget in production.
+  const exportUploadBlob = useCallback(async (): Promise<Blob | null> => {
+    const dataURL = withExportDataURL((d) => d, { format: "jpeg", quality: 0.92 });
     if (!dataURL) return null;
     const res = await fetch(dataURL);
     return res.blob();
@@ -624,7 +633,7 @@ export function useCanvasState() {
     zoomIn,
     zoomOut,
     exportPNG,
-    exportPNGBlob,
+    exportUploadBlob,
     getCanvasJSON,
     getCanvasJSONForPage,
     loadTemplate,

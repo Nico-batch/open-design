@@ -534,9 +534,14 @@ app.post("/api/news/:id/publish-image", async (c) => {
     return c.json({ error: "PUBLIC_BASE_URL no configurado en el servidor" }, 500);
   }
 
-  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+  // El cliente exporta JPEG (no PNG) para este flujo — ver exportUploadBlob en
+  // use-canvas.ts — pero se detecta por el mime real del blob en vez de asumirlo, por si
+  // algún día cambia.
+  const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const ext = mime === "image/png" ? "png" : "jpg";
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const data = await file.arrayBuffer();
-  const relativeUrl = await putUpload(filename, data, "image/png");
+  const relativeUrl = await putUpload(filename, data, mime);
   const publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
 
   try {
