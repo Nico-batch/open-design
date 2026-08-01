@@ -57,7 +57,7 @@ export function App() {
 
   if (designState.loading || (recordId && !designId)) {
     return (
-      <div class="flex items-center justify-center h-full bg-[#F3F4F7]">
+      <div class="flex items-center justify-center h-full bg-zinc-950">
         <div class="text-center">
           <div class="spinner !w-6 !h-6 !border-accent/30 !border-t-accent mb-3 mx-auto" />
           <p class="text-zinc-400 text-sm">Loading...</p>

@@ -21,7 +21,7 @@ export function DesignList() {
   return (
     <div class="flex flex-col gap-2">
       <button
-        class="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border-none cursor-pointer bg-accent text-zinc-900 hover:bg-accent-hover transition-all"
+        class="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border-none cursor-pointer bg-accent text-zinc-50 hover:bg-accent-hover transition-all"
         onClick={createDesign}
       >
         <Plus size={14} />
@@ -38,7 +38,7 @@ export function DesignList() {
           class={`flex items-center px-2.5 py-2 rounded-lg border transition-all group cursor-pointer ${
             activeDesign?.id === d.id
               ? "border-accent bg-accent/10"
-              : "border-zinc-200 bg-white hover:border-zinc-600"
+              : "border-zinc-800 bg-zinc-800 hover:border-zinc-500"
           }`}
           onClick={() => {
             navigate(`/design/${d.id}`);
@@ -47,7 +47,7 @@ export function DesignList() {
         >
           {editingId === d.id ? (
             <input
-              class="flex-1 bg-zinc-100 border border-accent rounded text-zinc-700 text-xs px-1.5 py-0.5 outline-none"
+              class="flex-1 bg-zinc-800 border border-accent rounded text-zinc-200 text-xs px-1.5 py-0.5 outline-none"
               value={editName}
               onInput={(e) => setEditName((e.target as HTMLInputElement).value)}
               onBlur={finishRename}
@@ -60,8 +60,8 @@ export function DesignList() {
             />
           ) : (
             <div class="flex-1 min-w-0">
-              <span class="text-xs font-medium text-zinc-600 truncate block">{d.name}</span>
-              <span class="text-[10px] text-zinc-600">
+              <span class="text-xs font-medium text-zinc-300 truncate block">{d.name}</span>
+              <span class="text-[10px] text-zinc-300">
                 {d.width}x{d.height} &middot;{" "}
                 {new Date(d.updated_at).toLocaleDateString()}
               </span>
@@ -69,7 +69,7 @@ export function DesignList() {
           )}
           <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
             <button
-              class="p-1 rounded text-zinc-400 bg-transparent border-none cursor-pointer hover:text-zinc-800 transition-colors"
+              class="p-1 rounded text-zinc-400 bg-transparent border-none cursor-pointer hover:text-zinc-100 transition-colors"
               onClick={(e) => {
                 e.stopPropagation();
                 startRename(d.id, d.name);

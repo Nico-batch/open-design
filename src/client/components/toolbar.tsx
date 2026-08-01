@@ -76,11 +76,11 @@ export function Toolbar() {
   };
 
   return (
-    <div class="relative flex items-center justify-between px-3 py-1.5 bg-white border-b border-zinc-200 shrink-0">
+    <div class="relative flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 shrink-0">
       {/* Left: Home + Design name + Canvas size */}
       <div class="flex items-center gap-3">
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50"
           onClick={() => navigate("/")}
           title="Back to designs"
         >
@@ -89,7 +89,7 @@ export function Toolbar() {
         {activeDesign && (
           editingName ? (
             <input
-              class="bg-zinc-100 border border-accent rounded px-2 py-0.5 text-xs text-zinc-900 outline-none w-40"
+              class="bg-zinc-800 border border-accent rounded px-2 py-0.5 text-xs text-zinc-50 outline-none w-40"
               value={nameValue}
               onInput={(e) => setNameValue((e.target as HTMLInputElement).value)}
               onBlur={finishRename}
@@ -101,7 +101,7 @@ export function Toolbar() {
             />
           ) : (
             <span
-              class="text-xs font-semibold text-zinc-600 cursor-pointer hover:text-zinc-900 transition-colors"
+              class="text-xs font-semibold text-zinc-300 cursor-pointer hover:text-zinc-50 transition-colors"
               onDblClick={startRename}
             >
               {activeDesign.name}
@@ -111,7 +111,7 @@ export function Toolbar() {
 
         <div class="relative">
           <button
-            class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-zinc-400 bg-zinc-100 border border-zinc-300 cursor-pointer hover:text-zinc-900 hover:border-zinc-500 transition-all"
+            class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-zinc-400 bg-zinc-800 border border-zinc-700 cursor-pointer hover:text-zinc-50 hover:border-zinc-500 transition-all"
             onClick={() => setShowSizeDropdown(!showSizeDropdown)}
           >
             {sizeLabel}
@@ -120,14 +120,14 @@ export function Toolbar() {
           {showSizeDropdown && (
             <>
               <div class="fixed inset-0 z-10" onClick={() => setShowSizeDropdown(false)} />
-              <div class="absolute top-full left-0 mt-1 bg-white border border-zinc-300 rounded-lg shadow-xl z-20 min-w-[200px] py-1">
+              <div class="absolute top-full left-0 mt-1 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-20 min-w-[200px] py-1">
                 {CANVAS_SIZES.map((s) => (
                   <button
                     key={s.label}
                     class={`w-full text-left px-3 py-1.5 text-xs cursor-pointer border-none transition-colors ${
                       s.width === canvasWidth && s.height === canvasHeight
                         ? "bg-accent/20 text-accent"
-                        : "text-zinc-600 bg-transparent hover:bg-zinc-100"
+                        : "text-zinc-300 bg-transparent hover:bg-zinc-800"
                     }`}
                     onClick={() => {
                       setCanvasSize(s.width, s.height);
@@ -149,7 +149,7 @@ export function Toolbar() {
       {/* Center: Undo / Redo */}
       <div class="flex items-center gap-1">
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed"
           onClick={undo}
           disabled={!canUndo}
           title="Undo (Cmd+Z)"
@@ -157,7 +157,7 @@ export function Toolbar() {
           <Undo2 size={16} />
         </button>
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed"
           onClick={redo}
           disabled={!canRedo}
           title="Redo (Cmd+Shift+Z)"
@@ -169,7 +169,7 @@ export function Toolbar() {
       {/* Right: Zoom + Export + Save */}
       <div class="flex items-center gap-1.5">
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50"
           onClick={zoomOut}
           title="Zoom out"
         >
@@ -179,24 +179,24 @@ export function Toolbar() {
           {Math.round((zoom / (fitScale || 1)) * 100)}%
         </span>
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50"
           onClick={zoomIn}
           title="Zoom in"
         >
           <ZoomIn size={15} />
         </button>
         <button
-          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-100 hover:text-zinc-900"
+          class="p-1.5 rounded-md text-zinc-400 bg-transparent border-none cursor-pointer transition-all hover:bg-zinc-800 hover:text-zinc-50"
           onClick={zoomToFit}
           title="Fit to screen"
         >
           <Maximize size={15} />
         </button>
 
-        <div class="w-px h-5 bg-zinc-300 mx-1" />
+        <div class="w-px h-5 bg-zinc-600 mx-1" />
 
         <button
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-semibold border border-zinc-300 cursor-pointer transition-all bg-transparent text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-semibold border border-zinc-700 cursor-pointer transition-all bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50"
           onClick={exportPNG}
           title="Export as PNG"
         >
@@ -224,7 +224,7 @@ export function Toolbar() {
         )}
       </div>
       {publishError && (
-        <div class="absolute top-full right-3 mt-1 px-2.5 py-1.5 rounded-md bg-red-50 border border-red-200 text-[11px] text-red-700 shadow-md z-30">
+        <div class="absolute top-full right-3 mt-1 px-2.5 py-1.5 rounded-md bg-red-950 border border-red-900 text-[11px] text-red-300 shadow-md z-30">
           {publishError}
         </div>
       )}

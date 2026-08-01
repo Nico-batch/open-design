@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Canva App</title>
+    <!-- Declared here as well as in CSS so the browser paints the very first frame dark;
+         otherwise there's a white flash before the stylesheet is applied. -->
+    <meta name="color-scheme" content="dark" />
+    <style>
+      html, body { background: #0b0b0d; }
+    </style>
+    <title>Editor de imágenes</title>
   </head>
   <body>
     <div id="app"></div>

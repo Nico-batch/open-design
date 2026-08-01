@@ -82,19 +82,19 @@ export function RightSidebar() {
 
   if (!selectedObject) {
     return (
-      <aside class="w-[280px] bg-white border-l border-zinc-200 flex flex-col shrink-0">
-        <div class="p-4 border-b border-zinc-200">
+      <aside class="w-[280px] bg-zinc-900 border-l border-zinc-800 flex flex-col shrink-0">
+        <div class="p-4 border-b border-zinc-800">
           <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Canvas</h2>
         </div>
         <div class="p-4 flex flex-col gap-3">
           <div class="flex items-center justify-between">
             <span class="text-[11px] text-zinc-400">Dimensions</span>
-            <span class="text-[11px] text-zinc-600 font-mono">{canvasWidth} x {canvasHeight}</span>
+            <span class="text-[11px] text-zinc-300 font-mono">{canvasWidth} x {canvasHeight}</span>
           </div>
           <label class="text-[11px] text-zinc-400">Background color</label>
           <input
             type="color"
-            class="w-full h-8 rounded-md border border-zinc-300 cursor-pointer bg-transparent"
+            class="w-full h-8 rounded-md border border-zinc-700 cursor-pointer bg-transparent"
             onChange={(e) => setBackground("color", (e.target as HTMLInputElement).value)}
           />
         </div>
@@ -103,15 +103,15 @@ export function RightSidebar() {
   }
 
   return (
-    <aside class="w-[280px] bg-white border-l border-zinc-200 flex flex-col shrink-0 overflow-y-auto">
+    <aside class="w-[280px] bg-zinc-900 border-l border-zinc-800 flex flex-col shrink-0 overflow-y-auto">
       {/* Header */}
-      <div class="p-4 border-b border-zinc-200 flex items-center justify-between">
+      <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
         <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
           {isText ? "Text" : isBackground ? "Background" : isImage ? "Image" : "Shape"}
         </h2>
         <div class="flex gap-1">
           <button
-            class="p-1 rounded text-zinc-400 bg-transparent border-none cursor-pointer hover:text-zinc-800 hover:bg-zinc-100 transition-all"
+            class="p-1 rounded text-zinc-400 bg-transparent border-none cursor-pointer hover:text-zinc-100 hover:bg-zinc-800 transition-all"
             onClick={async () => {
               if (!canvas || !selectedObject) return;
               const clone = await selectedObject.clone();
@@ -141,7 +141,7 @@ export function RightSidebar() {
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Font family</label>
               <select
-                class="w-full bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none cursor-pointer focus:border-accent"
+                class="w-full bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none cursor-pointer focus:border-accent"
                 value={(selectedObject as any).fontFamily || "Inter"}
                 onChange={(e) =>
                   updateSelectedObject({ fontFamily: (e.target as HTMLSelectElement).value })
@@ -160,7 +160,7 @@ export function RightSidebar() {
               <label class="text-[11px] text-zinc-400 mb-1 block">Font size</label>
               <input
                 type="number"
-                class="w-full bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent"
+                class="w-full bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent"
                 value={(selectedObject as any).fontSize || 18}
                 onInput={(e) =>
                   updateSelectedObject({
@@ -178,7 +178,7 @@ export function RightSidebar() {
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                     (selectedObject as any).fontWeight === "700" || (selectedObject as any).fontWeight === "bold"
                       ? "bg-accent/20 border-accent text-accent"
-                      : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                      : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   title="Bold — applies to the selected characters while editing text, or the whole box otherwise"
                   onMouseDown={(e) => e.preventDefault()}
@@ -190,7 +190,7 @@ export function RightSidebar() {
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                     (selectedObject as any).fontStyle === "italic"
                       ? "bg-accent/20 border-accent text-accent"
-                      : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                      : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   onClick={() =>
                     updateSelectedObject({
@@ -204,7 +204,7 @@ export function RightSidebar() {
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                     (selectedObject as any).underline
                       ? "bg-accent/20 border-accent text-accent"
-                      : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                      : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   onClick={() =>
                     updateSelectedObject({ underline: !(selectedObject as any).underline })
@@ -229,7 +229,7 @@ export function RightSidebar() {
                     class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                       (selectedObject as any).textAlign === align
                         ? "bg-accent/20 border-accent text-accent"
-                        : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                        : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                     }`}
                     onClick={() => updateSelectedObject({ textAlign: align })}
                   >
@@ -245,7 +245,7 @@ export function RightSidebar() {
               <div class="flex items-center gap-2">
                 <input
                   type="color"
-                  class="w-8 h-8 rounded border border-zinc-300 cursor-pointer bg-transparent shrink-0"
+                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
                   value={((selectedObject as any).fill as string) || "#ffffff"}
                   onInput={(e) =>
                     updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
@@ -253,7 +253,7 @@ export function RightSidebar() {
                 />
                 <input
                   type="text"
-                  class="flex-1 bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent font-mono"
+                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
                   value={((selectedObject as any).fill as string) || "#ffffff"}
                   onInput={(e) =>
                     updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
@@ -275,13 +275,13 @@ export function RightSidebar() {
               <div class="flex items-center gap-2 mb-2">
                 <input
                   type="color"
-                  class="w-8 h-8 rounded border border-zinc-300 cursor-pointer bg-transparent shrink-0"
+                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
                   value={outlineColor}
                   onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
                 />
                 <input
                   type="text"
-                  class="flex-1 bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent font-mono"
+                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
                   value={outlineColor}
                   onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
                 />
@@ -350,7 +350,7 @@ export function RightSidebar() {
               <div class="flex items-center gap-2">
                 <input
                   type="color"
-                  class="w-8 h-8 rounded border border-zinc-300 cursor-pointer bg-transparent shrink-0"
+                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
                   value={(selectedObject.fill as string) || "#6366f1"}
                   onInput={(e) =>
                     updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
@@ -358,7 +358,7 @@ export function RightSidebar() {
                 />
                 <input
                   type="text"
-                  class="flex-1 bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent font-mono"
+                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
                   value={(selectedObject.fill as string) || "#6366f1"}
                   onInput={(e) =>
                     updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
@@ -373,7 +373,7 @@ export function RightSidebar() {
               <div class="flex items-center gap-2">
                 <input
                   type="color"
-                  class="w-8 h-8 rounded border border-zinc-300 cursor-pointer bg-transparent shrink-0"
+                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
                   value={(selectedObject.stroke as string) || "#000000"}
                   onInput={(e) =>
                     updateSelectedObject({ stroke: (e.target as HTMLInputElement).value })
@@ -381,7 +381,7 @@ export function RightSidebar() {
                 />
                 <input
                   type="number"
-                  class="w-16 bg-white border border-zinc-300 rounded-md text-xs text-zinc-700 px-2 py-1.5 outline-none focus:border-accent"
+                  class="w-16 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent"
                   value={selectedObject.strokeWidth || 0}
                   min={0}
                   placeholder="Width"
@@ -452,7 +452,7 @@ export function RightSidebar() {
                 {(["cover", "contain"] as const).map((f) => (
                   <button
                     key={f}
-                    class="flex-1 py-1 rounded-md border border-zinc-300 bg-transparent text-[11px] capitalize text-zinc-400 cursor-pointer transition-all hover:text-zinc-900 hover:border-zinc-500"
+                    class="flex-1 py-1 rounded-md border border-zinc-700 bg-transparent text-[11px] capitalize text-zinc-400 cursor-pointer transition-all hover:text-zinc-50 hover:border-zinc-500"
                     onClick={() => setBackgroundImageFit(f)}
                   >
                     {f}
@@ -473,7 +473,7 @@ export function RightSidebar() {
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                     selectedObject.flipX
                       ? "bg-accent/20 border-accent text-accent"
-                      : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                      : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   onClick={() => updateSelectedObject({ flipX: !selectedObject.flipX })}
                 >
@@ -483,7 +483,7 @@ export function RightSidebar() {
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
                     selectedObject.flipY
                       ? "bg-accent/20 border-accent text-accent"
-                      : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                      : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   onClick={() => updateSelectedObject({ flipY: !selectedObject.flipY })}
                 >

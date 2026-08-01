@@ -842,6 +842,53 @@ sigue siendo 1080×1080 `absolutePositioned` y el `viewportTransform` intacto; e
 su trabajo (4 → 3 objetos) y el redo lo devuelve. Captura confirmando que la página vuelve
 a verse recortada y con su borde. Sin errores de consola.
 
+### 9.17 Tema oscuro
+
+Toda la interfaz pasa a oscuro. El editor pasaba el día con una foto a pantalla completa
+en el centro rodeada de blanco, que es justo el contexto donde un chrome claro cansa y
+falsea la percepción del color de la imagen.
+
+**Jerarquía de tres superficies** (definida en `@theme`, `src/client/styles.css`), que es
+lo que impide que un tema oscuro se lea como una plancha plana:
+
+| token | valor | uso |
+|---|---|---|
+| `surface` | `#0b0b0d` | app y área de trabajo — lo más oscuro, para que el diseño sea lo más luminoso de la pantalla y el ojo vaya ahí |
+| `surface-secondary` | `#18181b` | paneles: sidebars, toolbar, barra de páginas |
+| `surface-card` | `#27272a` | inputs, tarjetas y desplegables que van **encima** de un panel |
+
+Ese tercer nivel es imprescindible: en el tema claro el panel y sus controles eran ambos
+blancos y solo los separaba un borde; en oscuro eso desaparece, así que los controles se
+suben un escalón (`bg-zinc-800` sobre paneles `bg-zinc-900`).
+
+Detalles que no son un simple "invertir colores":
+
+- **`color-scheme: dark`** en `body`, más un `<meta name="color-scheme">` y un
+  `background` inline en `index.html`. Lo primero hace que el navegador pinte widgets
+  nativos (controles de formulario, scrollbars, el popup del selector de color) en su
+  variante oscura; lo segundo evita el destello blanco del primer frame, antes de que la
+  hoja de estilos se aplique.
+- **La sombra de la página** se rehizo: una sombra oscura no se ve sobre un fondo oscuro,
+  así que la página se separa del área de trabajo con un borde de luz tenue
+  (`rgba(255,255,255,0.10)`) y una sombra más profunda.
+- **El chevron del `<select>`** es un SVG embebido en la CSS con el color en la URL; había
+  que aclararlo a mano o desaparecía.
+- **Superficies de error** (`bg-red-50/border-red-200/text-red-700`) pasan a tintado
+  oscuro (`bg-red-950/border-red-900/text-red-300`) en vez de un lavado claro.
+
+**Lo que a propósito NO se oscurece**, porque es contenido del diseño y no chrome:
+
+- La **tarjeta de la página** en `page-canvas.tsx` (`bg-white`): representa la superficie
+  del lienzo y debe reflejar el `backgroundColor` del diseño, no el tema de la app.
+- Las **muestras de color y los degradados** del panel Bg: son opciones que el operador
+  aplica a la obra; tienen que enseñar su color real.
+
+La conversión (253 clases) se hizo con un mapeo en una sola pasada — importante para que
+un valor no se reescriba dos veces (p. ej. `600 → 300` y luego ese `300 → 200`) — y se
+verificó recorriendo el DOM ya renderizado en busca de superficies claras: los únicos
+resultados son los dos casos intencionados de arriba. Capturas del editor y de la galería
+revisadas, sin errores de consola.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

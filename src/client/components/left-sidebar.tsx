@@ -115,14 +115,14 @@ export function LeftSidebar() {
   return (
     <aside class="flex flex-row shrink-0">
       {/* Icon Rail */}
-      <div class="w-[70px] bg-white border-r border-zinc-200 flex flex-col items-center pt-2 gap-0.5 shrink-0">
+      <div class="w-[70px] bg-zinc-900 border-r border-zinc-800 flex flex-col items-center pt-2 gap-0.5 shrink-0">
         {SECTIONS.map((s) => (
           <button
             key={s.key}
             class={`flex flex-col items-center justify-center gap-0.5 w-[56px] h-[56px] rounded-lg bg-transparent border-none cursor-pointer transition-all ${
               activeSection === s.key
                 ? "text-accent bg-accent/10"
-                : "text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50"
+                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
             }`}
             onClick={() => handleSectionClick(s.key)}
           >
@@ -134,14 +134,14 @@ export function LeftSidebar() {
 
       {/* Content Panel */}
       <div
-        class="bg-white border-r border-zinc-200 overflow-hidden transition-all duration-200 ease-in-out"
+        class="bg-zinc-900 border-r border-zinc-800 overflow-hidden transition-all duration-200 ease-in-out"
         style={{ width: isOpen ? "240px" : "0px" }}
       >
         <div class="w-[240px] h-full flex flex-col">
           {activeSection && (
             <>
               <div class="px-3 pt-3 pb-2 shrink-0">
-                <h2 class="text-xs font-semibold text-zinc-800 uppercase tracking-wide m-0">
+                <h2 class="text-xs font-semibold text-zinc-100 uppercase tracking-wide m-0">
                   {SECTION_TITLES[activeSection]}
                 </h2>
               </div>
@@ -161,10 +161,10 @@ export function LeftSidebar() {
                   <div class="flex flex-col gap-2">
                     <p class="text-zinc-400 text-[11px] mb-1">Click to add text</p>
                     <button
-                      class="w-full text-left p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
+                      class="w-full text-left p-3 rounded-lg bg-zinc-800 border border-zinc-800 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
                       onClick={() => addText("heading")}
                     >
-                      <span class="text-lg font-bold text-zinc-900 group-hover:text-accent transition-colors">
+                      <span class="text-lg font-bold text-zinc-50 group-hover:text-accent transition-colors">
                         Add a heading
                       </span>
                       <span class="block text-[10px] text-zinc-400 mt-0.5">
@@ -172,10 +172,10 @@ export function LeftSidebar() {
                       </span>
                     </button>
                     <button
-                      class="w-full text-left p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
+                      class="w-full text-left p-3 rounded-lg bg-zinc-800 border border-zinc-800 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
                       onClick={() => addText("subheading")}
                     >
-                      <span class="text-sm font-medium text-zinc-900 group-hover:text-accent transition-colors">
+                      <span class="text-sm font-medium text-zinc-50 group-hover:text-accent transition-colors">
                         Add a subheading
                       </span>
                       <span class="block text-[10px] text-zinc-400 mt-0.5">
@@ -183,10 +183,10 @@ export function LeftSidebar() {
                       </span>
                     </button>
                     <button
-                      class="w-full text-left p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
+                      class="w-full text-left p-3 rounded-lg bg-zinc-800 border border-zinc-800 cursor-pointer transition-all hover:border-accent hover:bg-accent/5 group"
                       onClick={() => addText("body")}
                     >
-                      <span class="text-xs text-zinc-900 group-hover:text-accent transition-colors">
+                      <span class="text-xs text-zinc-50 group-hover:text-accent transition-colors">
                         Add body text
                       </span>
                       <span class="block text-[10px] text-zinc-400 mt-0.5">
@@ -208,7 +208,7 @@ export function LeftSidebar() {
                       ].map((s) => (
                         <button
                           key={s.type}
-                          class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer transition-all hover:border-accent hover:bg-accent/5"
+                          class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-zinc-800 border border-zinc-800 cursor-pointer transition-all hover:border-accent hover:bg-accent/5"
                           onClick={() => addShape(s.type)}
                         >
                           <s.icon size={24} class="text-zinc-400" />
@@ -223,7 +223,7 @@ export function LeftSidebar() {
                   <div>
                     <p class="text-zinc-400 text-[11px] mb-2">Upload images to add to canvas</p>
                     <div
-                      class="border-2 border-dashed border-zinc-300 rounded-lg p-6 text-center cursor-pointer transition-all hover:border-accent/50 hover:bg-accent/5"
+                      class="border-2 border-dashed border-zinc-700 rounded-lg p-6 text-center cursor-pointer transition-all hover:border-accent/50 hover:bg-accent/5"
                       onClick={() => fileInputRef.current?.click()}
                       onDrop={handleDrop}
                       onDragOver={(e) => e.preventDefault()}
@@ -232,7 +232,7 @@ export function LeftSidebar() {
                       <p class="text-xs text-zinc-400">
                         {uploading ? "Uploading..." : "Click or drag images here"}
                       </p>
-                      <p class="text-[10px] text-zinc-600 mt-1">PNG, JPG, SVG, WebP</p>
+                      <p class="text-[10px] text-zinc-300 mt-1">PNG, JPG, SVG, WebP</p>
                     </div>
                     <input
                       ref={fileInputRef}
@@ -252,7 +252,7 @@ export function LeftSidebar() {
                       {BG_COLORS.map((c) => (
                         <button
                           key={c}
-                          class="w-full aspect-square rounded-md border border-zinc-300 cursor-pointer transition-all hover:scale-110 hover:border-accent"
+                          class="w-full aspect-square rounded-md border border-zinc-700 cursor-pointer transition-all hover:scale-110 hover:border-accent"
                           style={{ background: c }}
                           onClick={() => setBackground("color", c)}
                         />
@@ -262,7 +262,7 @@ export function LeftSidebar() {
                     <p class="text-zinc-400 text-[11px] mb-2">Custom color</p>
                     <input
                       type="color"
-                      class="w-full h-8 rounded-md border border-zinc-300 cursor-pointer bg-transparent"
+                      class="w-full h-8 rounded-md border border-zinc-700 cursor-pointer bg-transparent"
                       onChange={(e) =>
                         setBackground("color", (e.target as HTMLInputElement).value)
                       }
@@ -273,7 +273,7 @@ export function LeftSidebar() {
                       {GRADIENT_PRESETS.map((g, i) => (
                         <button
                           key={i}
-                          class="w-full aspect-square rounded-md border border-zinc-300 cursor-pointer transition-all hover:scale-110 hover:border-accent"
+                          class="w-full aspect-square rounded-md border border-zinc-700 cursor-pointer transition-all hover:scale-110 hover:border-accent"
                           style={{ background: g }}
                           onClick={() => {
                             const match = g.match(/#[0-9a-f]{6}/gi);
@@ -291,7 +291,7 @@ export function LeftSidebar() {
                           class={`flex-1 py-1 rounded-md border text-[11px] capitalize cursor-pointer transition-all ${
                             bgFit === f
                               ? "bg-accent/20 border-accent text-accent"
-                              : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                              : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                           }`}
                           onClick={() => {
                             setBgFit(f);
@@ -303,7 +303,7 @@ export function LeftSidebar() {
                       ))}
                     </div>
                     <button
-                      class="w-full p-3 rounded-lg bg-white border border-zinc-200 cursor-pointer text-xs text-zinc-400 hover:border-accent hover:text-zinc-800 transition-all"
+                      class="w-full p-3 rounded-lg bg-zinc-800 border border-zinc-800 cursor-pointer text-xs text-zinc-400 hover:border-accent hover:text-zinc-100 transition-all"
                       onClick={() => bgFileRef.current?.click()}
                     >
                       <Upload size={14} class="inline mr-1.5" />
@@ -321,8 +321,8 @@ export function LeftSidebar() {
                         Sliders commit on `change` (pointer release) rather than `input`:
                         each blur step re-filters the full-size bitmap, which is far too
                         heavy to run on every pixel of drag. */}
-                    <div class="mt-5 pt-4 border-t border-zinc-200">
-                      <p class="text-zinc-500 text-[11px] font-semibold mb-1">Text legibility</p>
+                    <div class="mt-5 pt-4 border-t border-zinc-800">
+                      <p class="text-zinc-400 text-[11px] font-semibold mb-1">Text legibility</p>
                       <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
                         Soften or darken the photo so text on top stays readable.
                       </p>
@@ -380,7 +380,7 @@ export function LeftSidebar() {
                             class={`py-1 rounded-md border text-[10px] cursor-pointer transition-all ${
                               scrim.kind === kind
                                 ? "bg-accent/20 border-accent text-accent"
-                                : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                                : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                             }`}
                             onClick={() => setScrim(kind, scrim.opacity)}
                           >

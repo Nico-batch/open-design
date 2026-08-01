@@ -108,7 +108,7 @@ export function CanvasArea() {
     <div
       ref={wrapperRef}
       class="flex-1 overflow-auto"
-      style={{ background: "#E8EAEF" }}
+      style={{ background: "#0b0b0d" }}
     >
       {/* Spacer div — its dimensions match the visual (scaled) size so overflow scrollbars work */}
       <div
@@ -157,7 +157,7 @@ export function CanvasArea() {
                 {renamingId === page.id ? (
                   <input
                     ref={renameRef}
-                    class="text-[11px] text-zinc-700 bg-white border border-[#6366f1] rounded px-1.5 py-0.5 outline-none font-medium"
+                    class="text-[11px] text-zinc-200 bg-zinc-800 border border-[#6366f1] rounded px-1.5 py-0.5 outline-none font-medium"
                     style={{ width: 140 }}
                     value={renameValue}
                     onInput={(e) => setRenameValue((e.target as HTMLInputElement).value)}
@@ -169,7 +169,7 @@ export function CanvasArea() {
                   />
                 ) : (
                   <span
-                    class="text-[11px] text-zinc-400 font-medium cursor-pointer hover:text-zinc-600 transition-colors"
+                    class="text-[11px] text-zinc-400 font-medium cursor-pointer hover:text-zinc-300 transition-colors"
                     onClick={() => startRename(page.id, page.title)}
                   >
                     {page.title}
@@ -227,7 +227,7 @@ export function CanvasArea() {
             }}
           >
             <button
-              class="flex items-center gap-1.5 px-4 py-2 rounded-lg border-2 border-dashed border-zinc-300 bg-transparent cursor-pointer text-xs text-zinc-400 font-medium transition-all hover:border-[#6366f1] hover:text-[#6366f1] hover:bg-[#6366f1]/5"
+              class="flex items-center gap-1.5 px-4 py-2 rounded-lg border-2 border-dashed border-zinc-700 bg-transparent cursor-pointer text-xs text-zinc-400 font-medium transition-all hover:border-[#6366f1] hover:text-[#6366f1] hover:bg-[#6366f1]/5"
               onClick={() => addPage()}
             >
               <Plus size={14} />
