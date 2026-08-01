@@ -4,7 +4,7 @@ import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
-import { applyWorkspaceGeometry, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
+import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { api } from "../api";
 import type { Page, NewsRecord } from "../types";
 
@@ -179,6 +179,9 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
     if (page.canvas_json && page.canvas_json !== "{}") {
       try {
         c.loadFromJSON(JSON.parse(page.canvas_json)).then(async () => {
+          // loadFromJSON wipes the clip path set by applyWorkspaceGeometry above, so any
+          // saved design would otherwise open painting across the whole workspace.
+          applyWorkspaceClip(c, width, height);
           // Designs saved while the background was still a locked layer restore with
           // `selectable: false` baked into their JSON — unlock those so the operator can
           // reframe them too, not just newly created ones.

@@ -808,6 +808,40 @@ Verificado contra el **build de producción**: el panel reporta "off" en texto s
 sigue dando 2160×2160; sobrevive a guardar y recargar; y volver a 0 deja `stroke: null`.
 Sin errores de consola.
 
+### 9.16 `loadFromJSON` borra el recorte del lienzo (bug del Ctrl+Z)
+
+Reporte del usuario: al hacer **Ctrl+Z** «se quita el lienzo y se queda la parte del fondo
+que pusiste como añadido para trabajar». Es decir, tras deshacer, el diseño pasaba a
+pintarse sobre **toda** el área de trabajo, margen incluido, y el borde de la página
+desaparecía.
+
+**Causa.** `Canvas.loadFromJSON` termina con `this.set(enlivenedMap)`, y ese mapa lleva
+`clipPath` tomado directamente del JSON parseado. Nuestro `clipPath` es
+`excludeFromExport: true` a propósito (§9.13 bug C: es una propiedad del visor, no del
+diseño, y no debe ensuciar el `canvas_json` guardado), así que **nunca está en ese JSON** y
+la asignación lo deja en `undefined`. Sin recorte, todo se pinta hasta los bordes del
+elemento canvas, que es más grande que la página.
+
+Deshacer restaura un snapshot precisamente con `loadFromJSON`, de ahí que el síntoma
+saltara con Ctrl+Z. Pero **afectaba a tres rutas**, no solo a esa:
+
+1. `restoreFromHistory` — undo/redo (lo que se reportó).
+2. `loadTemplate` — aplicar una plantilla.
+3. `page-canvas.tsx` — abrir un diseño **ya guardado**, porque ahí
+   `applyWorkspaceGeometry` corre *antes* de `loadFromJSON`. O sea, el recorte también se
+   perdía al abrir cualquier borrador con contenido; simplemente aún no se había notado.
+
+**Arreglo.** El recorte se extrajo a `applyWorkspaceClip(canvas, w, h)` en
+`lib/workspace.ts`, con la advertencia escrita en su docstring, y se re-aplica en las tres
+rutas justo después de que `loadFromJSON` resuelva. `applyWorkspaceGeometry` ahora lo llama
+también, así que no hay dos definiciones del rectángulo.
+
+Verificado contra el **build de producción** con teclas reales: recién abierto, tras añadir
+un objeto, tras **Ctrl+Z**, tras **Ctrl+Shift+Z** y tras guardar y recargar, el `clipPath`
+sigue siendo 1080×1080 `absolutePositioned` y el `viewportTransform` intacto; el undo hace
+su trabajo (4 → 3 objetos) y el redo lo devuelve. Captura confirmando que la página vuelve
+a verse recortada y con su borde. Sin errores de consola.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

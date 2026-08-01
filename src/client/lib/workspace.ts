@@ -27,6 +27,31 @@ export function workspaceSize(width: number, height: number) {
 }
 
 /**
+ * Confines painting to the page.
+ *
+ * **Must be re-applied after every `loadFromJSON`.** Fabric's loader ends with
+ * `this.set(enlivenedMap)` where the map carries `clipPath` straight from the parsed JSON
+ * — and ours is deliberately `excludeFromExport`, so it is never in that JSON and the
+ * assignment silently sets it to `undefined`. The clip is then gone and the design paints
+ * over the whole workspace, margin included, which reads as the page having vanished.
+ * That's what undo did before this was factored out (loadFromJSON is how undo restores a
+ * snapshot).
+ */
+export function applyWorkspaceClip(canvas: fabric.Canvas, width: number, height: number): void {
+  // excludeFromExport keeps this out of the saved canvas_json — it's a property of the
+  // viewport, not of the design.
+  canvas.clipPath = new fabric.Rect({
+    left: 0,
+    top: 0,
+    width,
+    height,
+    absolutePositioned: true,
+    excludeFromExport: true,
+  });
+  canvas.requestRenderAll();
+}
+
+/**
  * Sizes `canvas` to the page plus the margin, shifts the origin so design coordinate
  * (0,0) is still the page's top-left corner, and clips painting to the page.
  */
@@ -39,18 +64,7 @@ export function applyWorkspaceGeometry(canvas: fabric.Canvas, width: number, hei
   // Objects keep using page coordinates; the translation puts the page inside the margin.
   canvas.setViewportTransform([dpr, 0, 0, dpr, WORKSPACE_PADDING * dpr, WORKSPACE_PADDING * dpr]);
 
-  // excludeFromExport keeps this helper out of the saved canvas_json — it's a property of
-  // the viewport, not of the design, and is re-applied on every load.
-  canvas.clipPath = new fabric.Rect({
-    left: 0,
-    top: 0,
-    width,
-    height,
-    absolutePositioned: true,
-    excludeFromExport: true,
-  });
-
-  canvas.requestRenderAll();
+  applyWorkspaceClip(canvas, width, height);
 }
 
 /**

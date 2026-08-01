@@ -4,7 +4,7 @@ import type { Template } from "../types";
 import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
-import { applyWorkspaceGeometry, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
+import { applyWorkspaceGeometry, applyWorkspaceClip, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 import {
   applyBackgroundEffects,
   applyScrim,
@@ -569,6 +569,9 @@ export function useCanvasState() {
       hist.index = index;
       const json = hist.entries[index];
       canvas.loadFromJSON(JSON.parse(json)).then(async () => {
+        // loadFromJSON wipes the clip path (see applyWorkspaceClip) — without this, undo
+        // left the design painting across the whole workspace and the page disappeared.
+        applyWorkspaceClip(canvas, canvasWidth, canvasHeight);
         await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
         canvas.requestRenderAll();
         syncCanvasFonts(canvas);
@@ -726,6 +729,7 @@ export function useCanvasState() {
       if (canvas && pageId) {
         isRestoringRef.current.add(pageId);
         canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
+          applyWorkspaceClip(canvas, template.width, template.height);
           await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();
           syncCanvasFonts(canvas);
