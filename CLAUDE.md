@@ -486,6 +486,41 @@ en PNG.
 algún día se manda otro formato. Verificado con `curl -D -`: el archivo subido responde
 con `Content-Type: image/jpeg` y `Content-Disposition: inline; filename="....jpg"`.
 
+### 9.10 Logging de peticiones y no-cache de `index.html` (diagnóstico en producción)
+
+El `Failed to fetch` seguía apareciendo en producción tras el cambio a JPEG, y los logs
+del contenedor que mandó el usuario **solo contenían el arranque** (`API listening...`).
+Eso no era información: **el servidor no registraba ninguna petición**, así que era
+imposible distinguir "la petición nunca llegó" (red/proxy) de "llegó y falló dentro".
+
+Dos cambios, ambos verificados con un build de producción real (`pnpm run build` +
+`pnpm run start`, no solo `tsc`):
+
+1. **Logging** (`src/server/index.ts`):
+   - Middleware global que loguea `[MÉTODO ruta] status en Nms` para toda petición, y
+     captura/registra cualquier excepción no manejada antes de dejarla propagar (un throw
+     que escapa se traduce en una conexión cortada sin respuesta útil — exactamente como
+     se ve un `Failed to fetch` desde el navegador).
+   - `publish-image` loguea sus tres fases por separado, porque cada una falla de forma
+     distinta y antes no había manera de saber en cuál moría: parsear el multipart,
+     escribir en el volumen (`/data/uploads` — típico fallo de permisos si el volumen
+     montado no es escribible por el usuario no-root, o disco lleno), y la llamada a
+     Twenty. Cada fase tiene su `try/catch` con un status HTTP y un mensaje propios.
+     Verificado provocando un fallo real (POST con un UUID inválido): el log muestra
+     `inicio` → `fichero recibido: N bytes, tipo image/jpeg` → `guardado en disco: ...` →
+     `fallo al actualizar Twenty: <error>` → `502 en 233ms`.
+
+2. **`index.html` nunca se cachea** (`src/server/serve.ts`): es el único fichero con
+   nombre estable, y es el que apunta a los bundles JS/CSS con hash en el nombre. Si el
+   navegador servía una copia cacheada tras un redeploy, el operador seguía ejecutando el
+   build **anterior** indefinidamente. Esto explicaba la señal más rara del reporte: el
+   usuario veía literalmente `"Failed to fetch"`, un texto que el commit anterior ya había
+   sustituido por un mensaje en español — es decir, el navegador no estaba ejecutando el
+   código desplegado. Ahora `index.html` va con `Cache-Control: no-cache, no-store,
+   must-revalidate` y los assets hasheados de `/assets/` con `max-age=31536000, immutable`
+   (pueden cachearse para siempre: un build nuevo genera nombres nuevos). Las rutas
+   `/api/*` no se tocan. Verificado con `curl -D -` en los tres casos.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

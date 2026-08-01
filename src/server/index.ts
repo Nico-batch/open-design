@@ -6,6 +6,29 @@ import { editorAuth } from "./auth.js";
 
 const app = new OpenAPIHono();
 
+// ── Logging de peticiones ───────────────────────────────────────────
+//
+// Sin esto no había NINGUNA traza de las peticiones en los logs del contenedor, así que
+// un fallo en producción (p. ej. el "Failed to fetch" al guardar en Twenty) no dejaba
+// absolutamente nada que mirar: no se podía distinguir "la petición nunca llegó al
+// servidor" (problema de red/proxy) de "llegó y falló aquí dentro". El coste es una
+// línea por petición; a este volumen (un operador) es irrelevante.
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  const { method } = c.req;
+  const path = c.req.path;
+  try {
+    await next();
+  } catch (e) {
+    // Un throw que llega hasta aquí normalmente se traduce en una conexión cortada sin
+    // respuesta útil para el navegador — que es exactamente como se ve un "Failed to
+    // fetch". Dejar constancia antes de que se pierda.
+    console.error(`[${method} ${path}] ERROR no manejado tras ${Date.now() - start}ms:`, e);
+    throw e;
+  }
+  console.log(`[${method} ${path}] ${c.res.status} en ${Date.now() - start}ms`);
+});
+
 // ── Seguridad (Fase 3) ──────────────────────────────────────────────
 //
 // Cabeceras defensivas para toda respuesta (documento SPA en producción incluido).
@@ -518,19 +541,36 @@ app.post("/api/designs/from-news/:newsId", async (c) => {
   return c.json({ ...row!, pages }, 200);
 });
 
+// Logging paso a paso a propósito: este endpoint hace tres cosas que pueden fallar de
+// formas muy distintas (parsear un multipart grande, escribir en el volumen, hablar con
+// Twenty) y en producción no había manera de saber en cuál de las tres moría.
 app.post("/api/news/:id/publish-image", async (c) => {
   const { id } = c.req.param();
-  const body = await c.req.parseBody();
-  const file = body["file"];
-  if (!file || typeof file === "string") {
-    return c.json({ error: "No file provided" }, 400);
+  console.log(`[publish-image ${id}] inicio`);
+
+  let file: File;
+  try {
+    const body = await c.req.parseBody();
+    const parsed = body["file"];
+    if (!parsed || typeof parsed === "string") {
+      console.warn(`[publish-image ${id}] sin fichero en el multipart`);
+      return c.json({ error: "No file provided" }, 400);
+    }
+    file = parsed;
+  } catch (e) {
+    console.error(`[publish-image ${id}] fallo al parsear el multipart:`, e);
+    return c.json({ error: "No se pudo leer la imagen enviada" }, 400);
   }
+  console.log(`[publish-image ${id}] fichero recibido: ${file.size} bytes, tipo ${file.type || "(sin tipo)"}`);
+
   if (file.size > MAX_UPLOAD_BYTES) {
+    console.warn(`[publish-image ${id}] fichero demasiado grande: ${file.size} > ${MAX_UPLOAD_BYTES}`);
     return c.json({ error: "File too large" }, 413);
   }
 
   const publicBaseUrl = process.env.PUBLIC_BASE_URL;
   if (!publicBaseUrl) {
+    console.error(`[publish-image ${id}] PUBLIC_BASE_URL no está definida en el entorno`);
     return c.json({ error: "PUBLIC_BASE_URL no configurado en el servidor" }, 500);
   }
 
@@ -540,16 +580,28 @@ app.post("/api/news/:id/publish-image", async (c) => {
   const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
   const ext = mime === "image/png" ? "png" : "jpg";
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const data = await file.arrayBuffer();
-  const relativeUrl = await putUpload(filename, data, mime);
-  const publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
+
+  let publicUrl: string;
+  try {
+    const data = await file.arrayBuffer();
+    const relativeUrl = await putUpload(filename, data, mime);
+    publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
+    console.log(`[publish-image ${id}] guardado en disco: ${filename} → ${publicUrl}`);
+  } catch (e) {
+    // Típicamente permisos del volumen (/data no escribible por el usuario no-root) o
+    // disco lleno.
+    console.error(`[publish-image ${id}] fallo al escribir el fichero:`, e);
+    return c.json({ error: "No se pudo guardar la imagen en el servidor" }, 500);
+  }
 
   try {
     await setNewsEditedImage(id, publicUrl, "Imagen editada (Open Design)");
   } catch (e) {
+    console.error(`[publish-image ${id}] fallo al actualizar Twenty:`, e);
     return c.json({ error: e instanceof Error ? e.message : "Twenty update failed" }, 502);
   }
 
+  console.log(`[publish-image ${id}] OK`);
   return c.json({ url: publicUrl }, 200);
 });
 
