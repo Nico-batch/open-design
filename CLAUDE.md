@@ -142,7 +142,8 @@ src/
     ├── context.tsx             — EditorContext + CANVAS_SIZES (presets IG)
     ├── types.ts, api.ts        — tipos y fetch al backend
     ├── lib/
-    │   └── logo.ts             — capa de logo fijo: applyLogoToCanvas/withoutLogo/isLogoObject
+    │   ├── logo.ts             — capa de logo fijo: applyLogoToCanvas/withoutLogo/isLogoObject
+    │   └── background.ts       — capa de fondo: findBackgroundImage/makeBackgroundInteractive (§9.12)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
     │   │                         fondo (cover/contain), undo/redo, resize, zoom, negrita
@@ -169,7 +170,7 @@ Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 | Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.png`, faro blanco, fondo transparente) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica; el archivo debe tener canal alfa real (RGBA), un JPG opaco se ve como un cuadro sólido encima del fondo. |
 | Negrita en selección (estilos por carácter) | Hecho — `toggleBold` en [`use-canvas.ts`](src/client/hooks/use-canvas.ts). Si el `Textbox`/`IText` está en edición con un rango de caracteres seleccionado, aplica `setSelectionStyles({fontWeight}, start, end)` (Fabric v6, per-character); si no, alterna el `fontWeight` del objeto entero (comportamiento previo). Verificado end-to-end: el `canvas_json` guardado incluye `styles: [{start, end, style: {fontWeight: "700"}}]` solo en el rango seleccionado. |
 | Fuentes autoalojadas | Hecho — `public/fonts/<Familia>/<peso>.woff2` (36 archivos, solo subset *latin*, cubre acentos/ñ del español) + [`src/client/fonts.css`](src/client/fonts.css) (`@font-face` generado, importado desde `main.tsx`). Se quitó `WebFont.load` de `app.tsx`, el `<link>` de Google Fonts de `index.html`, y la dependencia `webfontloader`. |
-| Encaje imagen origen (cover/contain) | Hecho — `fitBackgroundImage` en `use-canvas.ts`, con `setBackground(type, value, fit)` y `setBackgroundImageFit(fit)` para cambiar el encaje sin re-subir. UI: dos botones Cover/Contain en `left-sidebar.tsx` (sección Bg). El color de fondo del canvas ya sirve de "letterbox" para `contain`. |
+| Encaje imagen origen (cover/contain) | Hecho — `fitBackgroundImage` en `use-canvas.ts`, con `setBackground(type, value, fit)` y `setBackgroundImageFit(fit)` para cambiar el encaje sin re-subir. UI: dos botones Cover/Contain en `left-sidebar.tsx` (sección Bg). El color de fondo del canvas ya sirve de "letterbox" para `contain`. Además el fondo se puede **arrastrar y redimensionar a mano** (§9.12); Cover/Contain hacen de reset. |
 | Export PNG (cliente, 2x) | Sin cambios de fondo — sigue en [`use-canvas.ts`](src/client/hooks/use-canvas.ts) `exportPNG`, `multiplier: 2`. Pendiente para Fase 2: exponer el `dataURL`/blob en vez de forzar `<a download>`, para el flujo con Twenty/n8n. |
 | Quitar plantillas/tamaños LinkedIn | Hecho — seed de `templates` vaciado en [`schema.sql`](src/server/schema.sql) (las 6 plantillas `category: 'linkedin'` fuera). `templates` devuelve `[]`; `home.tsx` ya maneja ese caso (sección oculta si `templates.length === 0`). No había librería de stickers/SVG separada que quitar. |
 
@@ -580,6 +581,56 @@ diagnóstico), `canvas.toBlob` funciona, y el botón "Guardar en Twenty" complet
 a punta — 1 petición `publish-image` enviada, respuesta `200`, sin banner de error, sin
 errores de consola más allá del bloqueo de `data:` provocado a propósito para la prueba.
 Escritura de prueba en `imagenEditada` revertida a vacío después, como siempre.
+
+### 9.12 Fondo movible + dos bugs de serialización que salieron a la luz
+
+Petición del usuario: la imagen de origen entraba como fondo **fijo e inamovible**, y si
+no encajaba bien no había forma de recolocarla desde el editor (había que cambiarla en
+Twenty). Ahora el fondo se puede **arrastrar y redimensionar** como cualquier otro objeto.
+
+**`src/client/lib/background.ts` (nuevo)** — toda la lógica de identificar y configurar la
+capa de fondo, que antes estaba dispersa en búsquedas sueltas de `_isBgImage`:
+
+- `makeBackgroundInteractive(img)`: `selectable`/`evented`/`hasControls` a `true`. La
+  **rotación se deja bloqueada** a propósito (`lockRotation`, y se oculta el control `mtr`
+  con `setControlVisible`, que es por instancia — mutar `img.controls` afectaría a todos
+  los objetos porque el objeto de controles se comparte): para encuadrar un fondo, rotar
+  casi siempre es un accidente. Los botones **Cover/Contain** del sidebar siguen
+  funcionando y hacen de "reset" del encuadre si el operador se lía.
+- `findBackgroundImage(canvas)`: busca por `_isBgImage` y, si no lo encuentra, cae al
+  primer `FabricImage` que no sea el logo y lo re-marca (migración de diseños antiguos).
+
+**Bug 1 — fondos duplicados acumulándose.** Fabric **solo serializa las propiedades que
+conoce**: `toObject()` incluye `propertiesToInclude.concat(FabricObject.customProperties,
+this.constructor.customProperties)`, y `customProperties` es `[]` por defecto. Es decir,
+`_isBgImage`/`_bgFit` **se perdían al guardar**. Al reabrir un diseño, el refresco de la
+imagen (§9.4) buscaba el fondo anterior para reemplazarlo, no lo encontraba, y **añadía
+uno nuevo encima del viejo** — un fondo más por cada apertura. También rompía los botones
+Cover/Contain en diseños restaurados. Arreglado registrando
+`fabric.FabricImage.customProperties = ["_isBgImage", "_bgFit"]` en `background.ts`
+(verificado leyendo el `canvas_json` guardado de vuelta desde la API: la marca ya viaja).
+
+**Bug 2 — el refresco automático borraba el encuadre manual.** Como la imagen se re-pide a
+Twenty en *cada* apertura (§9.4), volver a aplicar el `cover` sin más deshacía cualquier
+recolocación guardada, dejando la nueva función inútil para borradores. Ahora
+`applyBackgroundToCanvas` acepta `{ preserveFraming: true }` (lo pasa solo el refresco de
+`page-canvas.tsx`, no una subida manual desde el sidebar) y **conserva
+`left/top/scaleX/scaleY` del fondo anterior cuando la imagen entrante tiene el mismo
+tamaño natural** — misma foto re-descargada, o un cambio donde la transformación anterior
+sigue teniendo sentido geométrico. Si las dimensiones cambian, es otra foto y se aplica un
+encaje limpio.
+
+Los diseños guardados **antes** de este cambio tienen `selectable: false` grabado en su
+JSON (esa sí es una propiedad estándar y se serializaba), así que `page-canvas.tsx`
+normaliza el fondo con `makeBackgroundInteractive` justo después de `loadFromJSON` — si no,
+los borradores antiguos seguirían con el fondo bloqueado para siempre.
+
+**Verificado contra el build de producción** (`:8787`, con CSP real — ver la regla de
+§10.3), no contra dev: arrastre **con ratón real** sobre el canvas → el fondo se mueve y
+queda seleccionado; Guardar → el `canvas_json` persistido contiene la marca y la posición
+nueva; recargar → **un solo fondo** (no duplicados), posición conservada, sigue
+seleccionable y al fondo del stack (índice 0, debajo de texto y logo); pulsar **Cover** →
+vuelve al encuadre limpio. Sin errores de consola en ningún paso.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

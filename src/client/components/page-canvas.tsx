@@ -2,6 +2,7 @@ import { useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
+import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
 import { api } from "../api";
 import type { Page, NewsRecord } from "../types";
 
@@ -150,7 +151,11 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       if (!isPrimaryPageRef.current || !twentyRecordId) return;
       api<NewsRecord>("GET", `/api/news/${twentyRecordId}`)
         .then((news) => {
-          if (news.imageUrl) applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover");
+          // preserveFraming: the image is re-fetched on every open, so re-fitting it
+          // unconditionally would undo any manual repositioning the operator had saved.
+          if (news.imageUrl) {
+            applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover", { preserveFraming: true });
+          }
           if (isBlankPage && news.title) applyTextToCanvas(c, "heading", news.title);
         })
         .catch((e) => console.error("Failed to refresh News image:", e));
@@ -160,6 +165,11 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
     if (page.canvas_json && page.canvas_json !== "{}") {
       try {
         c.loadFromJSON(JSON.parse(page.canvas_json)).then(async () => {
+          // Designs saved while the background was still a locked layer restore with
+          // `selectable: false` baked into their JSON — unlock those so the operator can
+          // reframe them too, not just newly created ones.
+          const bg = findBackgroundImage(c);
+          if (bg) makeBackgroundInteractive(bg);
           await applyLogoToCanvas(c, width, height);
           c.requestRenderAll();
           refreshFromTwenty(false);

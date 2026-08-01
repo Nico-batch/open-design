@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import type { Template } from "../types";
 import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
+import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
 
 const MAX_HISTORY = 50;
 
@@ -300,20 +301,57 @@ export function useCanvasState() {
   // must run strictly after, not through the "whichever canvas is active" indirection
   // that setBackground below uses, which has no such ordering guarantee).
   const applyBackgroundToCanvas = useCallback(
-    (canvas: fabric.Canvas, pageId: string, type: "color" | "gradient" | "image", value: string, fit: "cover" | "contain" = "cover") => {
+    (
+      canvas: fabric.Canvas,
+      pageId: string,
+      type: "color" | "gradient" | "image",
+      value: string,
+      fit: "cover" | "contain" = "cover",
+      options?: { preserveFraming?: boolean }
+    ) => {
       if (type === "color" || type === "gradient") {
         canvas.backgroundColor = value;
         canvas.requestRenderAll();
         saveHistory(pageId);
       } else if (type === "image") {
         return fabric.FabricImage.fromURL(value, { crossOrigin: "anonymous" }).then((img) => {
-          fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
-          img.set({ selectable: false, evented: false });
-          const objects = canvas.getObjects();
-          const bgObj = objects.find((o) => (o as any)._isBgImage);
-          if (bgObj) canvas.remove(bgObj);
+          // findBackgroundImage (not a raw `_isBgImage` lookup) so a background restored
+          // from a design saved before the marker was serialized is still recognised and
+          // replaced, instead of leaving a stale copy underneath.
+          const previous = findBackgroundImage(canvas);
+
+          // The Twenty refresh runs on *every* open (§9.4), so re-fitting unconditionally
+          // would throw away the operator's manual framing every time they reopened a
+          // draft — making a movable background pointless. Keep their transform when the
+          // incoming image has the same natural size as the one being replaced (same
+          // photo re-fetched, or a swap where the old transform is still geometrically
+          // meaningful); fall back to a clean fit when the dimensions differ, since then
+          // the old position/scale describes a different picture. An explicit upload from
+          // the sidebar doesn't pass preserveFraming, so it always gets a fresh fit.
+          const canKeepFraming =
+            options?.preserveFraming &&
+            previous &&
+            previous.width === img.width &&
+            previous.height === img.height;
+
+          if (canKeepFraming) {
+            img.set({
+              left: previous.left,
+              top: previous.top,
+              scaleX: previous.scaleX,
+              scaleY: previous.scaleY,
+            });
+            (img as any)._bgFit = (previous as any)._bgFit ?? fit;
+          } else {
+            fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
+            (img as any)._bgFit = fit;
+          }
+
+          // Movable/resizable so the operator can reframe it — see lib/background.ts.
+          makeBackgroundInteractive(img);
+          if (previous) canvas.remove(previous);
           (img as any)._isBgImage = true;
-          (img as any)._bgFit = fit;
+          img.setCoords();
           canvas.add(img);
           canvas.sendObjectToBack(img);
           canvas.requestRenderAll();
@@ -334,16 +372,18 @@ export function useCanvasState() {
     [getActiveCanvas, applyBackgroundToCanvas]
   );
 
-  // Re-fits the current background image (if any) without re-uploading it.
+  // Re-fits the current background image (if any) without re-uploading it. Doubles as the
+  // "reset framing" escape hatch now that the background can be dragged around by hand.
   const setBackgroundImageFit = useCallback(
     (fit: "cover" | "contain") => {
       const canvas = getActiveCanvas();
       const pageId = activeCanvasIdRef.current;
       if (!canvas || !pageId) return;
-      const bgObj = canvas.getObjects().find((o) => (o as any)._isBgImage) as fabric.FabricImage | undefined;
+      const bgObj = findBackgroundImage(canvas);
       if (!bgObj) return;
       fitBackgroundImage(bgObj, canvasWidth, canvasHeight, fit);
       (bgObj as any)._bgFit = fit;
+      bgObj.setCoords();
       canvas.requestRenderAll();
       saveHistory(pageId);
     },

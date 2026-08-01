@@ -41,7 +41,8 @@ export interface EditorContextValue {
     pageId: string,
     type: "color" | "gradient" | "image",
     value: string,
-    fit?: "cover" | "contain"
+    fit?: "cover" | "contain",
+    options?: { preserveFraming?: boolean }
   ) => Promise<void> | void;
   setBackgroundImageFit: (fit: "cover" | "contain") => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
