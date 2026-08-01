@@ -513,13 +513,73 @@ Dos cambios, ambos verificados con un build de producción real (`pnpm run build
 2. **`index.html` nunca se cachea** (`src/server/serve.ts`): es el único fichero con
    nombre estable, y es el que apunta a los bundles JS/CSS con hash en el nombre. Si el
    navegador servía una copia cacheada tras un redeploy, el operador seguía ejecutando el
-   build **anterior** indefinidamente. Esto explicaba la señal más rara del reporte: el
-   usuario veía literalmente `"Failed to fetch"`, un texto que el commit anterior ya había
-   sustituido por un mensaje en español — es decir, el navegador no estaba ejecutando el
-   código desplegado. Ahora `index.html` va con `Cache-Control: no-cache, no-store,
-   must-revalidate` y los assets hasheados de `/assets/` con `max-age=31536000, immutable`
-   (pueden cachearse para siempre: un build nuevo genera nombres nuevos). Las rutas
-   `/api/*` no se tocan. Verificado con `curl -D -` en los tres casos.
+   build **anterior** indefinidamente. Ahora `index.html` va con `Cache-Control: no-cache,
+   no-store, must-revalidate` y los assets hasheados de `/assets/` con
+   `max-age=31536000, immutable` (pueden cachearse para siempre: un build nuevo genera
+   nombres nuevos). Las rutas `/api/*` no se tocan. Verificado con `curl -D -` en los tres
+   casos. Sigue siendo correcto tenerlo, pero **no era la causa del bug** — ver §9.11.
+
+> **Hipótesis descartada:** en este punto se creyó que el `"Failed to fetch"` literal
+> significaba que el navegador ejecutaba un bundle viejo (porque un commit anterior ya
+> había sustituido ese texto por un mensaje en español). Era falso: ese mensaje concreto
+> lo produce el navegador *dentro* de `exportUploadBlob`, antes de llegar al código con el
+> `try/catch` traducido. La causa real está en §9.11; el logging de este apartado es lo
+> que permitió encontrarla.
+
+### 9.11 CAUSA RAÍZ del `Failed to fetch`: la CSP bloqueaba `fetch()` sobre `data:` URL
+
+**El bug real, confirmado en producción y reproducido en local bajo la CSP.**
+
+El logging de §9.10 fue decisivo: en los logs del contenedor durante un fallo aparecían
+todas las peticiones normales (`GET /api/news/...`, `/api/designs`, etc.) pero **ni una
+sola línea `[POST /api/news/.../publish-image]`**. La petición no es que fallara en el
+servidor: es que **nunca llegaba a salir del navegador**.
+
+El motivo estaba en cómo se exportaba la imagen (`use-canvas.ts`):
+
+```ts
+const dataURL = canvas.toDataURL({ format: "jpeg", ... });
+const res = await fetch(dataURL);   // ← aquí
+return res.blob();
+```
+
+`fetch()` sobre un `data:` URL cuenta como una conexión a efectos de CSP, y la política
+de la Fase 3 (§10.3) solo permite `connect-src 'self' ws: wss:`. El navegador lo bloquea
+y `fetch` rechaza con `TypeError: Failed to fetch` — **exactamente el texto que veía el
+usuario**, generado por el navegador, no por nuestro código. Por eso el `try/catch`
+añadido en §9.8 no lo capturaba con un mensaje mejor: ese blindaje envuelve el `fetch` de
+`publishToTwenty`, pero el que fallaba era el de `exportUploadBlob`, que corre *antes* y
+cuyo error lo recoge el `catch` genérico del toolbar, que muestra `e.message` tal cual.
+
+Confirmado con Playwright contra el build de producción (ver más abajo):
+
+```
+Connecting to 'data:text/plain;base64,...' violates the following Content Security Policy
+directive: "connect-src 'self' ws: wss:". The action has been blocked.
+```
+
+**Por qué no se detectó antes, pese a probarlo varias veces con Playwright:** todas las
+verificaciones anteriores se hicieron contra `pnpm run dev` (Vite en `:5173`), y **en dev
+el HTML lo sirve Vite sin nuestra cabecera CSP** — algo que este propio documento ya
+avisaba en §10.3 sin extraer la consecuencia. La CSP solo existe cuando el HTML lo sirve
+Hono desde `dist/`. **Regla para adelante: cualquier cosa que pueda depender de la CSP
+(fetch, workers, blobs, estilos/scripts inline) hay que probarla contra
+`pnpm run build && pnpm run start` en `:8787`, no contra `:5173`.**
+
+**Arreglo:** se eliminó por completo el round-trip por `data:` URL. `exportBlob` usa el
+`canvas.toBlob({ format, quality, multiplier })` nativo de Fabric v6, que va directo del
+canvas a un `Blob` sin pasar por base64 ni por `fetch` — así no interviene la CSP en
+absoluto (no hace falta relajarla) y además se ahorra tener en memoria una copia base64
+de la imagen 2x entera, que en un diseño con foto son varios MB de string encima del
+bitmap. `exportPNG` (el botón de descarga manual) se pasó también a `Blob` +
+`URL.createObjectURL` por el mismo motivo, con `revokeObjectURL` diferido.
+
+Verificado contra el build de producción real (`pnpm run build` + `pnpm run start`,
+`:8787`, con la CSP activa): `fetch('data:...')` sigue bloqueado (confirma el
+diagnóstico), `canvas.toBlob` funciona, y el botón "Guardar en Twenty" completa de punta
+a punta — 1 petición `publish-image` enviada, respuesta `200`, sin banner de error, sin
+errores de consola más allá del bloqueo de `data:` provocado a propósito para la prueba.
+Escritura de prueba en `imagenEditada` revertida a vacío después, como siempre.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
@@ -633,6 +693,13 @@ Notas de diseño:
   que el navegador realmente renderiza en dev lo sirve Vite en `:5173` directamente, sin
   pasar por este middleware. La cabecera cobra efecto real sobre el documento cuando se
   compila y se sirve con `pnpm run build && pnpm run start` (Hono sirviendo `dist/`).
+  **⚠️ Consecuencia práctica, aprendida por las malas (§9.11): en dev NO se prueba la
+  CSP.** Un `fetch()` sobre un `data:` URL (bloqueado por `connect-src`) pasó
+  desapercibido en varias rondas de verificación con Playwright contra `:5173` y solo
+  apareció ya desplegado, como un `Failed to fetch` sin traza en los logs del servidor.
+  Cualquier cambio que pueda depender de la CSP — `fetch`, workers, blobs, estilos o
+  scripts inline — hay que verificarlo contra `pnpm run build && pnpm run start` en
+  `:8787`.
 
 ### 10.4 Qué queda fuera de Fase 3 (a propósito)
 

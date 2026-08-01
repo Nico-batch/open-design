@@ -476,50 +476,65 @@ export function useCanvasState() {
 
   // ── Export ──────────────────────────────────────────────────────────
 
-  const withExportDataURL = useCallback(
-    <T,>(fn: (dataURL: string) => T, options?: { format?: "png" | "jpeg"; quality?: number }): T | undefined => {
+  // Renders the active canvas at 2x straight to a Blob.
+  //
+  // Deliberately uses Fabric's own `toBlob` instead of the old
+  // `toDataURL()` + `fetch(dataURL)` round-trip: fetching a `data:` URL counts as a
+  // connection under CSP `connect-src`, and our own policy (Fase 3, §10.3) only allows
+  // `'self' ws: wss:`. So in production that fetch was blocked by the browser and
+  // rejected with a bare `TypeError: Failed to fetch` — the request never even left the
+  // page, which is why the server logs showed no trace of it at all. It never reproduced
+  // in dev because there the HTML is served by Vite on :5173, without our CSP header
+  // (see §10.3) — anything CSP-related has to be tested against a production build.
+  //
+  // Going straight to a Blob also avoids holding a base64 copy of the whole 2x image in
+  // memory, which for a photo-heavy design is several MB of string on top of the bitmap.
+  const exportBlob = useCallback(
+    async (options?: { format?: "png" | "jpeg"; quality?: number }): Promise<Blob | null> => {
       const canvas = getActiveCanvas();
-      if (!canvas) return undefined;
+      if (!canvas) return null;
       const activeObj = canvas.getActiveObject();
       canvas.discardActiveObject();
       canvas.requestRenderAll();
 
-      const dataURL = canvas.toDataURL({
-        format: options?.format ?? "png",
-        multiplier: 2,
-        quality: options?.quality ?? 1,
-      });
-      const result = fn(dataURL);
-
-      if (activeObj) {
-        canvas.setActiveObject(activeObj);
-        canvas.requestRenderAll();
+      try {
+        return await canvas.toBlob({
+          format: options?.format ?? "png",
+          multiplier: 2,
+          quality: options?.quality ?? 1,
+        });
+      } finally {
+        if (activeObj) {
+          canvas.setActiveObject(activeObj);
+          canvas.requestRenderAll();
+        }
       }
-      return result;
     },
     [getActiveCanvas]
   );
 
-  const exportPNG = useCallback(() => {
-    withExportDataURL((dataURL) => {
-      const link = document.createElement("a");
-      link.download = "design.png";
-      link.href = dataURL;
-      link.click();
-    });
-  }, [withExportDataURL]);
+  const exportPNG = useCallback(async () => {
+    const blob = await exportBlob({ format: "png" });
+    if (!blob) return;
+    // Same reasoning as above: a blob: URL for the download link instead of a multi-MB
+    // data: URL. Revoked on a delay so the browser has started the download first.
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = "design.png";
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }, [exportBlob]);
 
   // JPEG, not PNG: this feeds "Guardar en Twenty", and the canvas background is always
   // opaque (color or a cover/contain-fit image), so there's no transparency to lose.
   // A 2x PNG export of a photo-heavy design can run 5-10+ MB; the same design as JPEG is
   // typically a fraction of that with no visible quality loss — much less likely to trip
   // upload size caps, proxy limits, or the container's memory budget in production.
-  const exportUploadBlob = useCallback(async (): Promise<Blob | null> => {
-    const dataURL = withExportDataURL((d) => d, { format: "jpeg", quality: 0.92 });
-    if (!dataURL) return null;
-    const res = await fetch(dataURL);
-    return res.blob();
-  }, [withExportDataURL]);
+  const exportUploadBlob = useCallback(
+    (): Promise<Blob | null> => exportBlob({ format: "jpeg", quality: 0.92 }),
+    [exportBlob]
+  );
 
   // ── Serialization ───────────────────────────────────────────────────
 
