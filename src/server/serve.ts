@@ -28,8 +28,22 @@ if (existsSync(DIST_DIR)) {
   });
 
   app.use("/*", serveStatic({ root: "dist" }));
-  app.get("*", (c, next) => {
-    if (c.req.path.startsWith("/api")) return next();
+
+  // SPA fallback — but NEVER for asset requests.
+  //
+  // serveStatic calls next() when it can't find a file, so without this guard a missing
+  // /assets/index-<hash>.css fell through to here and was answered with index.html at
+  // Content-Type: text/html. The browser then refuses to apply it (we send nosniff) and
+  // the page renders completely unstyled, with nothing in the log to explain why — the
+  // request looks like a perfectly healthy 200. Anything under /assets/, or any path that
+  // looks like a file, gets an honest 404 instead, which is diagnosable.
+  app.get("*", async (c, next) => {
+    const path = c.req.path;
+    if (path.startsWith("/api")) return next();
+    if (path.startsWith("/assets/") || /\.[a-z0-9]+$/i.test(path)) {
+      console.warn(`[static] no encontrado: ${path}`);
+      return c.text("Not found", 404);
+    }
     return serveStatic({ path: "dist/index.html" })(c, next);
   });
 }
