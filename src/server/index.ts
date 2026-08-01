@@ -29,8 +29,13 @@ app.use("*", async (c, next) => {
 const requireAuth = editorAuth();
 app.use("/api/*", async (c, next) => {
   if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
+  if (c.req.method === "GET" && c.req.path === "/api/health") return next();
   return requireAuth(c, next);
 });
+
+// ── Health check (Fase 4 — sin auth: lo consulta el orquestador, no un operador) ──
+
+app.get("/api/health", (c) => c.json({ ok: true }, 200));
 
 // ── Schemas ──────────────────────────────────────────────────────────
 

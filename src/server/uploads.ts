@@ -3,7 +3,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = join(__dirname, "..", "..", "uploads");
+const UPLOADS_DIR = process.env.UPLOADS_DIR || join(__dirname, "..", "..", "uploads");
 mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const MIME: Record<string, string> = {

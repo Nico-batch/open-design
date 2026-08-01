@@ -157,6 +157,8 @@ src/
 public/
 ├── fonts/<Familia>/<peso>.woff2   — fuentes autoalojadas (servidas por Vite/estático)
 └── logo.jpg                       — logo de marca (faro blanco sobre negro, 1024x1024)
+
+Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 ```
 
 ## 4. Editor a medida (Fase 1 — completada)
@@ -250,12 +252,20 @@ otros archivos personales sueltos, no solo el logo).
 
 **Fase 3 completa** (seguridad/hardening a nivel app, ver §10).
 
+**Fase 4 completa por el lado del repo** (`Dockerfile` + `.dockerignore`, ver §11) —
+build y arranque verificados localmente con `docker build`/`docker run` (auth, health
+check, usuario no-root, persistencia en `/data`, todo probado, no solo leído). Falta la
+parte que solo se puede hacer con acceso real al panel de Dokploy: crear la Application,
+pegar las env vars, montar el volumen, poner el dominio + middleware de Traefik — nada de
+eso es código de este repo, son pasos manuales del usuario en su infraestructura.
+
 **Sin decidir todavía (activos reales, no solo código):**
 - Fuentes de marca definitivas — hoy autoalojadas las mismas 10 familias que traía el
   template (Google Fonts, descargadas y servidas localmente).
-- Perímetro de red de la Fase 4 (VPN vs. basic auth/forward-auth en Traefik vs. SSO) y el
-  dominio real del editor — determina `PUBLIC_BASE_URL` y la URL final del enlace de
-  Twenty (§9.7).
+- Dominio real del editor una vez desplegado — determina `PUBLIC_BASE_URL` y la URL final
+  del enlace de Twenty (§9.7); hasta entonces sigue apuntando a `localhost`.
+- Nombre de servicio interno de Twenty en Dokploy, para la optimización de red interna
+  opcional de §11.5 (no bloqueante).
 
 ## 9. Fase 2 — Integración con Twenty (completa, sin n8n)
 
@@ -473,3 +483,136 @@ como lo separa `PLAN.md` §5:
 - `pnpm audit`/Renovate (`PLAN.md` §6) — sigue pendiente, sin cambios desde §6 de este
   documento (el ruido sigue viniendo de `fabric` → `jsdom`, no explotable en runtime tal
   como se despliega).
+
+## 11. Fase 4 — Despliegue en el VPS con Dokploy
+
+Decisiones del usuario para esta fase: acceso por **dominio público + Basic Auth en
+Traefik** (sobre el Basic Auth de app de la Fase 3 — dos capas independientes), y Twenty
+corre en **el mismo VPS/Dokploy** que el editor (así que las llamadas editor→Twenty
+pueden optimizarse a red interna de Docker más adelante, ver §11.5).
+
+### 11.1 Imagen (`Dockerfile`, nuevo)
+
+Build multi-stage, verificado localmente con `docker build` + `docker run` (no solo
+lectura del Dockerfile):
+
+- **Etapa `build`**: `node:24-slim`, `pnpm install --frozen-lockfile` (con
+  devDependencies, hace falta `vite` para el build) + `pnpm run build` → `dist/`. El
+  cliente no necesita ninguna variable de entorno en build time (todo lo que llama a la
+  API usa rutas relativas `/api/...`, nunca `import.meta.env.VITE_*` — confirmado por
+  grep, cero resultados).
+- **Etapa `runtime`**: `node:24-slim` de nuevo (imagen limpia, sin herramientas de
+  build), `pnpm install --prod --frozen-lockfile` (solo `dependencies`, sin `vite`/
+  `typescript`), copia `dist/` y `src/server/` (el backend sigue corriendo con `tsx`
+  directamente sobre `.ts`, igual que en dev — no hay paso de compilación propio para el
+  servidor, ver `CLAUDE.md` §2). Usuario no-root `editor` (`groupadd`/`useradd
+  --system`), sin acceso a nada fuera de `/app` y `/data`. `HEALTHCHECK` nativo de Docker
+  contra `GET /api/health`.
+- **`node:sqlite`** no necesita compilación nativa (ver §1), así que ninguna etapa
+  necesita `python3`/`make`/`g++` — la imagen se queda pequeña y sin toolchain de build
+  en el runtime.
+- **`tsx` se movió de `devDependencies` a `dependencies`** en `package.json` (con su
+  `pnpm-lock.yaml` actualizado): es una dependencia de **ejecución** real (`pnpm run
+  start` la necesita en producción), estaba mal clasificada.
+- **Gotcha encontrado y arreglado**: la primera build falló en la etapa `runtime` con
+  `[ERR_PNPM_IGNORED_BUILDS] canvas@2.11.2, esbuild@0.25.12, esbuild@0.27.7` — la etapa
+  runtime copiaba `package.json`+`pnpm-lock.yaml` pero **no** `pnpm-workspace.yaml`
+  (donde vive `allowBuilds`, ver §2), así que pnpm no sabía qué scripts de build tenía
+  aprobados el usuario. Arreglado copiando también `pnpm-workspace.yaml` en esa etapa.
+
+### 11.2 Volúmenes: un único mount en `/data`
+
+`src/server/db.ts` ya soportaba `DB_PATH` por env (heredado de antes); se añadió el
+mismo patrón a `src/server/uploads.ts` (`UPLOADS_DIR` por env, antes hardcodeado a una
+ruta relativa al código fuente). El `Dockerfile` fija por defecto:
+
+```
+DB_PATH=/data/data.db
+UPLOADS_DIR=/data/uploads
+```
+
+**En Dokploy: monta un único volumen en `/data`** (persiste `data.db` +
+`data.db-wal`/`-shm` + `uploads/` juntos). Sin este volumen, cada redeploy borra todos
+los diseños guardados y las imágenes subidas — es el paso más fácil de olvidar y el más
+caro de olvidar.
+
+### 11.3 Variables de entorno a definir en el editor de Environment de Dokploy
+
+**No crear un `.env` a mano en el servidor** — Dokploy inyecta estas variables
+directamente en el proceso del contenedor (confirmado: el `CMD` del Dockerfile usa
+`tsx --env-file-if-exists=.env`, que tolera la ausencia del fichero — verificado en el
+`docker run` de prueba, log: `.env not found. Continuing without it.`, y el servidor
+arrancó igualmente leyendo las env vars del propio proceso).
+
+| Variable | Valor |
+|---|---|
+| `TWENTY_API_URL` | `https://crm.elfarodealicante.com` (o el nombre de servicio interno si se aplica §11.5) |
+| `TWENTY_TOKEN` | el token real (nunca en el cliente, ya se cumple) |
+| `PUBLIC_BASE_URL` | `https://<dominio-real-del-editor>` (Fase 4 — hoy en local es `http://localhost:8787`) |
+| `EDITOR_USER` / `EDITOR_PASSWORD` | credenciales del Basic Auth de la app (Fase 3) — pueden (y conviene que) sean **distintas** de las del Basic Auth de Traefik (§11.4), dos capas independientes |
+
+`DB_PATH`, `UPLOADS_DIR` y `PORT` **no hace falta definirlas** — el `Dockerfile` ya las
+fija a los valores correctos (`/data/...`, `8787`); solo tocarlas si se cambia el layout
+de volúmenes.
+
+### 11.4 Dominio y Traefik (decisión del usuario: dominio público + Basic Auth)
+
+- Asignar dominio en Dokploy → Traefik gestiona TLS con Let's Encrypt automáticamente,
+  sin certificados a mano.
+- Añadir el middleware de **Basic Auth de Traefik** al dominio (panel de Dokploy →
+  Domains → Middlewares, o el equivalente en la versión que tengas) con credenciales
+  **propias**, distintas de `EDITOR_USER`/`EDITOR_PASSWORD`. Con esto el operador
+  necesita pasar dos prompts de Basic Auth (Traefik primero, la app después) — molesto
+  una vez por sesión de navegador, pero es defensa en profundidad real: si algún día se
+  quita o se rompe el auth de la app por error, Traefik sigue bloqueando el acceso.
+- **Health check en Dokploy**: configurar `GET /api/health` como ruta de health check —
+  responde `200 {"ok":true}` **sin auth** (excluida a propósito del middleware de la
+  app, ver `src/server/index.ts`; si además pasa por Traefik con Basic Auth delante, hay
+  que excluir esta ruta también del middleware de Traefik o el health check del propio
+  Dokploy empezará a fallar con 401).
+- **Límite de memoria**: fijar un límite modesto en los recursos de la Application en
+  Dokploy (p. ej. 512 MB) — es una app ligera (sin render en servidor, sin `jsdom`/
+  `canvas` en el bundle de runtime), y el VPS ya tiene Twenty + n8n usando memoria.
+- **Backup del volumen** `/data`: opcional (`PLAN.md` §5) — los borradores son de bajo
+  valor, pero es gratis activarlo si Dokploy lo soporta para ese volumen.
+
+### 11.5 Red interna hacia Twenty (mismo VPS — optimización, no bloqueante)
+
+Como Twenty corre en el mismo Dokploy, las llamadas `editor → Twenty` (en
+`src/server/twenty.ts`, hoy contra `https://crm.elfarodealicante.com`) **pueden**
+enrutarse por la red interna de Docker en vez de salir a Internet y volver a entrar —
+evita que el token de Twenty viaje por fuera del host. Para activarlo:
+
+1. Confirmar en Dokploy el **nombre de servicio interno** del contenedor de Twenty
+   (Dokploy → la Application de Twenty → detalles del servicio; suele ser algo con el
+   patrón `<nombre-app>-<hash>` en `dokploy-network`) y su puerto interno.
+2. Si el editor y Twenty están en la **misma red compartida** (`dokploy-network` — el
+   caso normal salvo que se use Isolated Deployments), cambiar `TWENTY_API_URL` a
+   `http://<nombre-de-servicio-interno>:<puerto>` en vez del dominio público.
+3. Si se usa **Isolated Deployments** (cada Application en su propia red por defecto),
+   hay que compartir red a propósito entre el editor y Twenty desde la configuración de
+   red de Dokploy — si no, el nombre de servicio interno no resuelve y esto no
+   funcionará (`PLAN.md` §5/§7 ya avisaba de esto).
+
+No es bloqueante para el primer despliegue: `TWENTY_API_URL=https://crm.elfarodealicante.com`
+tal cual (como ya funciona hoy en local) sigue siendo válido — es solo más tráfico
+saliendo/entrando del host del que hace falta. Aplicar este cambio cuando se tenga
+acceso real al panel de Dokploy para confirmar el nombre de servicio exacto — no se
+puede adivinar desde aquí.
+
+### 11.6 Qué no se implementó (a propósito) y por qué
+
+- **`X-Forwarded-Proto`/`X-Forwarded-Host` ("trust proxy")**: `PLAN.md` §7 avisaba de
+  esto para cuando hay un proxy (Traefik) delante, pero se revisó el código
+  (`src/server/index.ts`, `serve.ts`) y **ninguna ruta construye URLs a partir de
+  cabeceras de la request** — la única URL pública que se construye
+  (`publish-image` → `imagenEditada`) usa siempre `PUBLIC_BASE_URL` explícito por env
+  (§9.6), nunca `Host`/`X-Forwarded-*`. No hay nada que "confiar" porque no se lee esa
+  cabecera en ningún sitio; se deja anotado por si en el futuro se añade código que sí
+  la necesite.
+- **Contenedor sin acceso a los volúmenes/DB de Twenty**: no requiere código — el
+  contenedor del editor simplemente no monta ningún volumen de Twenty (`docker run`/
+  Dokploy solo le da el volumen `/data` propio, ver §11.2). Nada que hacer más allá de
+  no montarlo por error.
+- **`docker-compose.yml`**: no se añadió — `PLAN.md` §4/§9 pide desplegar como
+  **Application** (build por Dockerfile) en Dokploy, no como stack de Compose.
