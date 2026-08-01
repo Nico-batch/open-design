@@ -57,6 +57,7 @@ export interface EditorContextValue {
   syncEffectsFromCanvas: (canvas: fabric.Canvas) => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   toggleBold: () => void;
+  insertEmoji: (emoji: string) => void;
   deleteSelected: () => void;
   undo: () => void;
   redo: () => void;

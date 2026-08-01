@@ -15,12 +15,14 @@ import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { FONT_FAMILIES } from "../lib/fonts";
 import { isBackgroundImage } from "../lib/background";
+import { EmojiPicker } from "./emoji-picker";
 
 export function RightSidebar() {
   const {
     selectedObject,
     updateSelectedObject,
     toggleBold,
+    insertEmoji,
     deleteSelected,
     canvas,
     setBackground,
@@ -213,6 +215,12 @@ export function RightSidebar() {
                   <Underline size={14} />
                 </button>
               </div>
+            </div>
+
+            {/* Emoji */}
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 block">Emoji</label>
+              <EmojiPicker onPick={insertEmoji} />
             </div>
 
             {/* Text alignment */}

@@ -8,7 +8,7 @@ import {
   downscaleOversizedSource,
   normalizeBackgroundSource,
 } from "../lib/background";
-import { syncCanvasFonts } from "../lib/fonts";
+import { syncCanvasFonts, containsEmoji } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 import {
   applyBackgroundEffects,
@@ -145,6 +145,16 @@ export function useCanvasState() {
     });
     canvas.on("object:removed", (e) => {
       if (!isLogoObject(e.target)) saveHistory(pageId);
+    });
+
+    // Typing an emoji is the one case where a font arrives *mid-edit*: the emoji font is
+    // only fetched once there's an emoji on the canvas (it's ~2 MB), so the first one the
+    // operator types gets measured against a placeholder and the line wraps with the
+    // wrong width — the same trap as any other webfont (see lib/fonts.ts). Re-measure
+    // once the face is really there.
+    canvas.on("text:changed", (e) => {
+      const text = (e.target as fabric.FabricText | undefined)?.text;
+      if (text && containsEmoji(text)) syncCanvasFonts(canvas);
     });
 
     // Initial history snapshot
@@ -556,6 +566,51 @@ export function useCanvasState() {
     });
   }, [getActiveCanvas, selectedObject, saveHistory, refreshSelection]);
 
+  // Inserts an emoji into the selected text: at the cursor (replacing the selected range)
+  // if the box is being edited, appended otherwise. The picker exists because the OS
+  // keyboard shortcut for emoji is not something every operator knows, and because on the
+  // canvas there is nowhere else to paste one from.
+  const insertEmoji = useCallback(
+    (emoji: string) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId || !selectedObject) return;
+      if (!(selectedObject instanceof fabric.Textbox || selectedObject instanceof fabric.IText)) return;
+      const obj = selectedObject as fabric.IText;
+
+      if (obj.isEditing) {
+        const start = obj.selectionStart ?? obj._text.length;
+        const end = obj.selectionEnd ?? start;
+        obj.insertChars(emoji, undefined, start, end);
+        // Move the caret past what was inserted, counting GRAPHEMES: an emoji is several
+        // code units, and using the raw string length would drop the caret in the middle
+        // of one. Then re-sync Fabric's hidden textarea, or the next keystroke would be
+        // applied against the stale text it still holds.
+        const inserted = obj.graphemeSplit(emoji).length;
+        obj.selectionStart = obj.selectionEnd = Math.min(start + inserted, obj._text.length);
+        if (obj.hiddenTextarea) obj.hiddenTextarea.value = obj.text;
+        obj._updateTextarea();
+      } else {
+        obj.set({ text: (obj.text ?? "") + emoji } as any);
+        obj.initDimensions?.();
+      }
+
+      obj.setCoords();
+      canvas.requestRenderAll();
+      saveHistory(pageId);
+      refreshSelection();
+
+      // First emoji on the canvas = the emoji font is only being fetched now, so what was
+      // just measured is a placeholder's width (see lib/fonts.ts).
+      syncCanvasFonts(canvas).then(() => {
+        obj.setCoords();
+        canvas.requestRenderAll();
+        refreshSelection();
+      });
+    },
+    [getActiveCanvas, selectedObject, saveHistory, refreshSelection]
+  );
+
   const deleteSelected = useCallback(() => {
     const canvas = getActiveCanvas();
     if (!canvas) return;
@@ -821,6 +876,7 @@ export function useCanvasState() {
     syncEffectsFromCanvas,
     updateSelectedObject,
     toggleBold,
+    insertEmoji,
     deleteSelected,
     undo,
     redo,

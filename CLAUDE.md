@@ -1035,6 +1035,57 @@ error de consola; un evento abre desde `?recordId=…&objectType=event` con su f
 `:type` inventado da `400` en las cuatro rutas. Las escrituras de prueba en `imagenEditada`
 (un evento y una noticia) se revirtieron a vacío después, como siempre.
 
+### 9.20 Emojis en el texto
+
+Los emojis ya entraban y se pintaban (Fabric v6 usa `Intl.Segmenter`, así que una secuencia
+ZWJ como 👨‍👩‍👧 cuenta como **un** grafema y no se parte al medir ni al mover el cursor).
+Lo que faltaba era que el resultado **no dependiera de la máquina del operador**: sin fuente
+propia, el navegador cae a la del sistema y cada uno pinta un juego distinto — y Windows no
+trae banderas de país, así que `🇪🇸` salía como las letras **"ES"** (reproducido y capturado
+antes del cambio).
+
+**Fuente autoalojada.** `public/fonts/Noto-Color-Emoji/{0..9}.woff2` (COLRv1, ~2 MB en
+total) + sus `@font-face` en [`fonts.css`](src/client/fonts.css), **troceados por
+`unicode-range`** igual que los sirve Google Fonts: el navegador solo descarga el trozo del
+emoji que se use. No se declara ninguna familia del sistema como respaldo — el objetivo es
+justamente que el diseño se vea igual en cualquier equipo.
+
+**Un solo punto de enganche en Fabric.** `_getFontDeclaration` es donde Fabric construye la
+cadena `ctx.font`, y **usa la misma para medir y para pintar**; añadir ahí la familia de
+emoji (`installEmojiFontFallback` en [`lib/fonts.ts`](src/client/lib/fonts.ts), llamado una
+vez desde `main.tsx`) mantiene las dos en sintonía y deja intacto el `fontFamily` del
+objeto — que es lo que alimenta el desplegable de fuentes y lo que se serializa en
+`canvas_json`. Tocar `fontFamily` habría contaminado ambos.
+
+**Y hay que re-medir, como con cualquier otra webfont** (§9.13 bug B): la fuente de emoji
+solo se pide cuando ya hay un emoji en el lienzo, así que el primero que se escribe se mide
+contra un glifo de reserva y la línea se parte con el ancho equivocado. `syncCanvasFonts`
+la carga (pasándole el texto, para que `unicode-range` acote la descarga) y limpia la caché
+de anchos; un listener de `text:changed` cubre el caso de escribirlo **en mitad de la
+edición**, que es el único momento en que una fuente llega a mitad de faena.
+
+**Selector de emojis** ([`emoji-picker.tsx`](src/client/components/emoji-picker.tsx), en el
+panel derecho, sección Text): lista curada por categorías, no el catálogo Unicode entero —
+esto es para titulares, no un teclado de chat. Inserta **en el cursor** si el cuadro está en
+edición (y si no, al final). Dos detalles que lo hacen usable:
+
+- `onMouseDown` con `preventDefault` en el botón y en el desplegable: sin eso el foco se va
+  del cuadro de texto, Fabric cierra la edición y el emoji acabaría al final en vez de
+  donde está el cursor.
+- El cursor avanza contando **grafemas**, no la longitud de la cadena: un emoji son varias
+  unidades de código y `insertChars` deja el cursor en medio si se usa `.length` (el propio
+  manejador de *drop* de Fabric tiene ese fallo).
+- Las muestras del selector se pintan con la **misma** fuente que el lienzo, o en Windows
+  una bandera se vería ahí como las letras del país y no como lo que va a salir. Abrir el
+  selector sí descarga todos los trozos (los emojis de la lista caen en subconjuntos
+  distintos); es una vez por navegador y quedan cacheados un año (§9.10).
+
+Verificado contra el **build de producción** (`:8788`, CSP real — §10.3): sin emojis en el
+lienzo **no se descarga ni un byte** de la fuente; al escribir `🇪🇸` sale la bandera (antes,
+"ES"); el selector inserta en el cursor sin sacar el texto de edición; sobrevive a guardar y
+recargar; y la exportación sigue dando 2160×2160 con los emojis pintados. Sin errores de
+consola.
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

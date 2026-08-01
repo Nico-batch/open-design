@@ -37,14 +37,57 @@ export const FONT_FAMILIES = [
  * plain `@font-face` CSS and never added the re-measure step, which is where this
  * regression came from.)
  */
-export async function ensureFontLoaded(family: string, weight: string | number = 400): Promise<void> {
+export async function ensureFontLoaded(
+  family: string,
+  weight: string | number = 400,
+  text?: string
+): Promise<void> {
   if (!document.fonts) return;
   try {
-    // The size is irrelevant for loading; only family/weight select the face.
-    await document.fonts.load(`${weight} 16px "${family}"`);
+    // The size is irrelevant for loading; only family/weight select the face. The second
+    // argument matters for families split by `unicode-range` (the emoji font): it tells
+    // the browser which subsets are actually needed, so only those get fetched.
+    await document.fonts.load(`${weight} 16px "${family}"`, text);
   } catch {
     // A font that fails to load must never break editing — the fallback still renders.
   }
+}
+
+// ── Emojis ──────────────────────────────────────────────────────────
+//
+// The font is self-hosted (see fonts.css) so a design looks the same on any machine
+// instead of picking up whatever emoji set the operator's OS ships — Windows, for one,
+// has no country flags at all, so 🇪🇸 comes out as the bare letters "ES".
+//
+// Making canvas text use it needs one hook, not a change to every text object: Fabric
+// builds the `ctx.font` string in `_getFontDeclaration`, and uses that same string both
+// to MEASURE and to PAINT. Appending the emoji family there keeps those two in step and
+// leaves `fontFamily` on the object untouched — which matters, because that value feeds
+// the font dropdown and gets serialized into `canvas_json`.
+
+export const EMOJI_FONT_FAMILY = "Noto Color Emoji";
+
+/** Anything the emoji font should handle: pictographs, the variation selector that turns
+ *  a symbol into an emoji, ZWJ (family/couple sequences) and regional indicators (flags). */
+const EMOJI_RE = /[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F1E6}-\u{1F1FF}]/u;
+
+export function containsEmoji(text: string): boolean {
+  return EMOJI_RE.test(text);
+}
+
+let fontDeclarationPatched = false;
+
+/** Adds the emoji family as a fallback to every canvas font declaration Fabric builds. */
+export function installEmojiFontFallback(): void {
+  if (fontDeclarationPatched) return;
+  fontDeclarationPatched = true;
+  const proto = fabric.FabricText.prototype as unknown as {
+    _getFontDeclaration: (...args: unknown[]) => string;
+  };
+  const original = proto._getFontDeclaration;
+  proto._getFontDeclaration = function (...args: unknown[]) {
+    return `${original.apply(this, args)}, "${EMOJI_FONT_FAMILY}"`;
+  };
 }
 
 type TextStyle = { fontFamily?: string; fontWeight?: string | number };
@@ -82,11 +125,23 @@ export async function syncCanvasFonts(canvas: fabric.Canvas): Promise<void> {
   const used = collectUsedFaces(canvas);
   if (used.size === 0) return;
 
-  await Promise.all(
-    [...used.entries()].flatMap(([family, weights]) =>
+  // Emoji get measured with the same fallback trap as any other webfont (see above): if
+  // the font isn't there yet, Fabric measures a placeholder glyph, caches that width and
+  // wraps the line with it. Only fetched when there are emoji on the canvas — the family
+  // is ~2 MB across all its subsets, and the text passed here narrows it to the ones
+  // actually needed.
+  const emojiText = canvas
+    .getObjects()
+    .filter((obj): obj is fabric.FabricText => obj instanceof fabric.FabricText)
+    .map((obj) => obj.text ?? "")
+    .join("");
+
+  await Promise.all([
+    ...[...used.entries()].flatMap(([family, weights]) =>
       [...weights].map((weight) => ensureFontLoaded(family, weight))
-    )
-  );
+    ),
+    containsEmoji(emojiText) ? ensureFontLoaded(EMOJI_FONT_FAMILY, 400, emojiText) : Promise.resolve(),
+  ]);
 
   // Measurements taken before the font arrived are cached and wrong — drop them.
   for (const family of used.keys()) fabric.cache.clearFontCache(family);
