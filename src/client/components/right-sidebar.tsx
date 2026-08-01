@@ -13,19 +13,8 @@ import {
 } from "lucide-preact";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
-
-const FONT_FAMILIES = [
-  "Inter",
-  "Playfair Display",
-  "Montserrat",
-  "Poppins",
-  "Roboto",
-  "Open Sans",
-  "Lora",
-  "Raleway",
-  "Source Sans Pro",
-  "Merriweather",
-];
+import { FONT_FAMILIES } from "../lib/fonts";
+import { isBackgroundImage } from "../lib/background";
 
 export function RightSidebar() {
   const {
@@ -35,12 +24,15 @@ export function RightSidebar() {
     deleteSelected,
     canvas,
     setBackground,
+    setBackgroundImageFit,
+    setBackgroundScale,
     canvasWidth,
     canvasHeight,
   } = useEditor();
 
   const isText = selectedObject instanceof fabric.Textbox || selectedObject instanceof fabric.IText;
   const isImage = selectedObject instanceof fabric.FabricImage;
+  const isBackground = isBackgroundImage(selectedObject);
   const isShape = selectedObject && !isText && !isImage;
 
   if (!selectedObject) {
@@ -70,7 +62,7 @@ export function RightSidebar() {
       {/* Header */}
       <div class="p-4 border-b border-zinc-200 flex items-center justify-between">
         <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-          {isText ? "Text" : isImage ? "Image" : "Shape"}
+          {isText ? "Text" : isBackground ? "Background" : isImage ? "Image" : "Shape"}
         </h2>
         <div class="flex gap-1">
           <button
@@ -345,8 +337,54 @@ export function RightSidebar() {
           </>
         )}
 
+        {/* ── Background image ──────────────────────────────────────── */}
+        {/* A photo scaled to cover the page can reach past the workspace margin, putting
+            its corner handles out of reach — this panel is the dependable way to resize
+            it (and to undo a bad framing). See lib/workspace.ts. */}
+        {isBackground && (
+          <>
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                Scale
+                <span class="text-zinc-400 font-mono">
+                  {Math.round((selectedObject.scaleX ?? 1) * 100)}%
+                </span>
+              </label>
+              <input
+                type="range"
+                min="0.1"
+                max="4"
+                step="0.01"
+                class="w-full accent-accent"
+                value={selectedObject.scaleX ?? 1}
+                onInput={(e) =>
+                  setBackgroundScale(parseFloat((e.target as HTMLInputElement).value))
+                }
+              />
+              <p class="text-[10px] text-zinc-400 mt-1">
+                Also draggable directly on the canvas.
+              </p>
+            </div>
+
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 block">Reset framing</label>
+              <div class="flex gap-1.5">
+                {(["cover", "contain"] as const).map((f) => (
+                  <button
+                    key={f}
+                    class="flex-1 py-1 rounded-md border border-zinc-300 bg-transparent text-[11px] capitalize text-zinc-400 cursor-pointer transition-all hover:text-zinc-900 hover:border-zinc-500"
+                    onClick={() => setBackgroundImageFit(f)}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
         {/* ── Image properties ──────────────────────────────────────── */}
-        {isImage && (
+        {isImage && !isBackground && (
           <>
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Flip</label>

@@ -3,6 +3,8 @@ import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
+import { syncCanvasFonts } from "../lib/fonts";
+import { applyWorkspaceGeometry, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { api } from "../api";
 import type { Page, NewsRecord } from "../types";
 
@@ -35,14 +37,13 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       backgroundColor: "#ffffff",
       preserveObjectStacking: true,
       selection: true,
+      // Controls are drawn *after* the clip path is applied (see lib/workspace.ts), which
+      // is what lets the handles of an oversized background stay visible in the margin.
       controlsAboveOverlay: true,
     });
 
-    // Retina rendering
-    const dpr = window.devicePixelRatio || 1;
-    c.setDimensions({ width: width * dpr, height: height * dpr }, { cssOnly: false });
-    c.setDimensions({ width, height }, { cssOnly: true });
-    c.setViewportTransform([dpr, 0, 0, dpr, 0, 0]);
+    // Retina rendering + the margin the controls live in.
+    applyWorkspaceGeometry(c, width, height);
 
     // Custom control appearance — applied per-object via object:added
     const CONTROL_STYLE = {
@@ -172,6 +173,9 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
           if (bg) makeBackgroundInteractive(bg);
           await applyLogoToCanvas(c, width, height);
           c.requestRenderAll();
+          // Saved text was measured against whatever font was available when it was
+          // *created*; re-measure now that we can guarantee the real faces (lib/fonts.ts).
+          syncCanvasFonts(c);
           refreshFromTwenty(false);
         });
       } catch {
@@ -197,12 +201,21 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
     };
   }, []);
 
+  const workspace = workspaceSize(width, height);
+
   return (
-    <div
-      class={`shadow-lg rounded-lg overflow-hidden ${isActive ? "ring-2 ring-[#6366f1]" : ""}`}
-      style={{ width, height }}
-    >
-      <canvas ref={canvasElRef} />
+    // The wrapper is the whole workspace (page + margin) and must NOT clip, or the
+    // off-page handles it exists to expose would be cut off again. The page itself is a
+    // card sitting behind the canvas: the canvas is transparent outside the clip path, so
+    // this is what gives the page its edge and shadow.
+    <div class="relative" style={{ width: workspace.width, height: workspace.height }}>
+      <div
+        class={`absolute shadow-lg rounded-lg bg-white ${isActive ? "ring-2 ring-[#6366f1]" : ""}`}
+        style={{ left: WORKSPACE_PADDING, top: WORKSPACE_PADDING, width, height }}
+      />
+      <div class="absolute inset-0">
+        <canvas ref={canvasElRef} />
+      </div>
     </div>
   );
 }

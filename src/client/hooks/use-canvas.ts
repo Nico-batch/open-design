@@ -3,16 +3,23 @@ import * as fabric from "fabric";
 import type { Template } from "../types";
 import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
+import { syncCanvasFonts } from "../lib/fonts";
+import { applyWorkspaceGeometry, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 
 const MAX_HISTORY = 50;
 
-// A plain `{ ...obj }` spread drops the prototype, so `instanceof fabric.Textbox` (used
-// by right-sidebar.tsx to pick which properties panel to show) breaks on the very next
-// render. This clones enough to give Preact a new reference (so the state update isn't
-// bailed out) while keeping the object `instanceof`-correct.
-function cloneWithPrototype<T extends object>(obj: T): T {
-  return Object.assign(Object.create(Object.getPrototypeOf(obj)), obj);
-}
+// NOTE — why there is no `cloneWithPrototype` here any more:
+//
+// The selected object used to be *copied* into state on every property change (first with
+// a `{ ...obj }` spread, later with a prototype-preserving clone) purely to hand Preact a
+// new reference so the re-render wasn't bailed out. That copy is detached from the canvas,
+// so from the second edit onwards the right sidebar was mutating a ghost: the first change
+// after selecting something applied, every one after it silently did nothing. That is the
+// "a veces no se edita el texto desde el panel derecho" bug.
+//
+// State now holds the *real* fabric object, and `selectionVersion` (bumped on every
+// mutation) is what makes Preact re-render — so the panel always reads live values off the
+// object that is actually on the canvas.
 
 const TEXT_PRESETS = {
   heading: { text: "Add a heading", fontSize: 48, fontWeight: "700", fontFamily: "Montserrat" },
@@ -38,6 +45,10 @@ export function useCanvasState() {
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
   const activeCanvasIdRef = useRef<string | null>(null);
   const [selectedObject, setSelectedObject] = useState<fabric.FabricObject | null>(null);
+  // Bumped whenever the selected object is mutated, so consumers re-render and read the
+  // live values off it (see the note at the top of this file).
+  const [selectionVersion, setSelectionVersion] = useState(0);
+  const refreshSelection = useCallback(() => setSelectionVersion((v) => v + 1), []);
   const [canvasWidth, setCanvasWidth] = useState(1080);
   const [canvasHeight, setCanvasHeight] = useState(1080);
   const [zoom, setZoom] = useState(0.58);
@@ -175,6 +186,9 @@ export function useCanvasState() {
       canvas.add(text);
       canvas.setActiveObject(text);
       canvas.requestRenderAll();
+      // The preset's font is almost certainly not fetched yet on a fresh page, so the
+      // box would otherwise be sized from fallback metrics (see lib/fonts.ts).
+      syncCanvasFonts(canvas);
     },
     [canvasWidth, canvasHeight]
   );
@@ -390,6 +404,24 @@ export function useCanvasState() {
     [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
   );
 
+  // Resizes the background from the panel. Needed as well as the on-canvas handles: a
+  // photo wide enough to cover the page can extend past even the workspace margin, which
+  // puts its corner handles out of reach (see lib/workspace.ts).
+  const setBackgroundScale = useCallback(
+    (scale: number) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      const bgObj = findBackgroundImage(canvas);
+      if (!bgObj) return;
+      scaleAboutPageCenter(bgObj, scale, canvasWidth, canvasHeight);
+      canvas.requestRenderAll();
+      saveHistory(pageId);
+      refreshSelection();
+    },
+    [getActiveCanvas, canvasWidth, canvasHeight, saveHistory, refreshSelection]
+  );
+
   // ── Object manipulation ─────────────────────────────────────────────
 
   const updateSelectedObject = useCallback(
@@ -397,12 +429,27 @@ export function useCanvasState() {
       const canvas = getActiveCanvas();
       const pageId = activeCanvasIdRef.current;
       if (!canvas || !selectedObject || !pageId) return;
+
       selectedObject.set(props as Partial<fabric.FabricObject>);
+      // Fabric re-measures text itself for layout properties, but the *controls* keep the
+      // coordinates they were drawn with until setCoords() runs — that's what left the
+      // selection box lagging a size behind the glyphs after every change.
+      selectedObject.setCoords();
       canvas.requestRenderAll();
       saveHistory(pageId);
-      setSelectedObject(cloneWithPrototype(selectedObject));
+      refreshSelection();
+
+      // Switching to a font that hasn't been fetched yet measures against the fallback
+      // (see lib/fonts.ts), so re-measure once the real face is in.
+      if ("fontFamily" in props || "fontWeight" in props) {
+        syncCanvasFonts(canvas).then(() => {
+          selectedObject.setCoords();
+          canvas.requestRenderAll();
+          refreshSelection();
+        });
+      }
     },
-    [getActiveCanvas, selectedObject, saveHistory]
+    [getActiveCanvas, selectedObject, saveHistory, refreshSelection]
   );
 
   // Toggles bold. If the object is being edited with a text range selected, applies
@@ -428,10 +475,19 @@ export function useCanvasState() {
       const isBold = (obj as any).fontWeight === "700" || (obj as any).fontWeight === "bold";
       obj.set({ fontWeight: isBold ? "400" : "700" } as any);
     }
+    obj.setCoords();
     canvas.requestRenderAll();
     saveHistory(pageId);
-    setSelectedObject(cloneWithPrototype(obj as fabric.FabricObject));
-  }, [getActiveCanvas, selectedObject, saveHistory]);
+    refreshSelection();
+
+    // Bold usually means pulling in a weight that was never fetched — re-measure once
+    // it lands, otherwise the box keeps the regular-weight metrics.
+    syncCanvasFonts(canvas).then(() => {
+      obj.setCoords();
+      canvas.requestRenderAll();
+      refreshSelection();
+    });
+  }, [getActiveCanvas, selectedObject, saveHistory, refreshSelection]);
 
   const deleteSelected = useCallback(() => {
     const canvas = getActiveCanvas();
@@ -458,6 +514,7 @@ export function useCanvasState() {
       canvas.loadFromJSON(JSON.parse(json)).then(async () => {
         await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
         canvas.requestRenderAll();
+        syncCanvasFonts(canvas);
         isRestoringRef.current.delete(pageId);
         updateUndoRedoState(pageId);
       });
@@ -487,12 +544,9 @@ export function useCanvasState() {
     (width: number, height: number) => {
       setCanvasWidth(width);
       setCanvasHeight(height);
-      // Resize all canvases
-      const dpr = window.devicePixelRatio || 1;
+      // Resize all canvases (page + workspace margin, and re-clip to the new page size)
       for (const canvas of canvasMapRef.current.values()) {
-        canvas.setDimensions({ width: width * dpr, height: height * dpr }, { cssOnly: false });
-        canvas.setDimensions({ width, height }, { cssOnly: true });
-        canvas.setViewportTransform([dpr, 0, 0, dpr, 0, 0]);
+        applyWorkspaceGeometry(canvas, width, height);
         applyLogoToCanvas(canvas, width, height);
         canvas.requestRenderAll();
       }
@@ -542,6 +596,9 @@ export function useCanvasState() {
           format: options?.format ?? "png",
           multiplier: 2,
           quality: options?.quality ?? 1,
+          // The canvas is bigger than the page now (workspace margin, see lib/workspace.ts)
+          // — crop back to exactly the page so the export is unchanged by that.
+          ...pageExportCrop(canvasWidth, canvasHeight),
         });
       } finally {
         if (activeObj) {
@@ -550,7 +607,7 @@ export function useCanvasState() {
         }
       }
     },
-    [getActiveCanvas]
+    [getActiveCanvas, canvasWidth, canvasHeight]
   );
 
   const exportPNG = useCallback(async () => {
@@ -612,6 +669,7 @@ export function useCanvasState() {
         canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
           await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();
+          syncCanvasFonts(canvas);
           isRestoringRef.current.delete(pageId);
           historyMapRef.current.set(pageId, {
             entries: [withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()))],
@@ -663,6 +721,9 @@ export function useCanvasState() {
       return getActiveCanvas();
     },
     selectedObject,
+    // Consumers don't read this directly — it exists so a mutation of the (stable)
+    // selected object still produces a state change and re-renders the panels.
+    selectionVersion,
     canvasWidth,
     canvasHeight,
     zoom,
@@ -676,6 +737,7 @@ export function useCanvasState() {
     setBackground,
     applyBackgroundToCanvas,
     setBackgroundImageFit,
+    setBackgroundScale,
     updateSelectedObject,
     toggleBold,
     deleteSelected,

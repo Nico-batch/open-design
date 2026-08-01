@@ -143,7 +143,9 @@ src/
     ├── types.ts, api.ts        — tipos y fetch al backend
     ├── lib/
     │   ├── logo.ts             — capa de logo fijo: applyLogoToCanvas/withoutLogo/isLogoObject
-    │   └── background.ts       — capa de fondo: findBackgroundImage/makeBackgroundInteractive (§9.12)
+    │   ├── background.ts       — capa de fondo: findBackgroundImage/makeBackgroundInteractive (§9.12)
+    │   ├── fonts.ts            — carga y re-medición de webfonts en canvas (§9.13 bug B)
+    │   └── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
     │   │                         fondo (cover/contain), undo/redo, resize, zoom, negrita
@@ -631,6 +633,93 @@ queda seleccionado; Guardar → el `canvas_json` persistido contiene la marca y 
 nueva; recargar → **un solo fondo** (no duplicados), posición conservada, sigue
 seleccionable y al fondo del stack (índice 0, debajo de texto y logo); pulsar **Cover** →
 vuelve al encuadre limpio. Sin errores de consola en ningún paso.
+
+### 9.13 Solidez del editor: texto y área de trabajo
+
+Reporte del usuario: «la edición del texto es pésima — el recuadro de contorno se
+descuadra y no encaja con el tamaño real, hay palabras que se tapan solas, y a veces no
+se edita el texto al modificarlo desde el panel derecho». Eran **tres bugs distintos**,
+cada uno con su causa; ninguno era cosmético.
+
+#### Bug A — el panel derecho mutaba un objeto fantasma
+
+`updateSelectedObject` guardaba en el estado una **copia** del objeto seleccionado tras
+cada cambio (primero un spread `{...obj}`, luego un clon que preservaba el prototipo),
+solo para darle a Preact una referencia nueva y que no se saltara el re-render. Esa copia
+está **desconectada del canvas**: a partir del segundo cambio, el panel mutaba un objeto
+que ya no era el del lienzo. Por eso «a veces» no se editaba — en realidad *siempre*
+fallaba salvo el primer cambio tras seleccionar algo.
+
+Ahora el estado guarda el **objeto real** y hay un contador `selectionVersion` que se
+incrementa en cada mutación; eso es lo que dispara el re-render, y el panel siempre lee
+valores vivos. Verificado: tres cambios seguidos de `fontSize` (60 → 72 → 90) desde el
+panel se aplican los tres al objeto del canvas.
+
+#### Bug B — el texto se medía con una fuente que aún no había cargado
+
+El texto en canvas **no dispara la descarga de webfonts**: el navegador solo pide un
+`@font-face` cuando algo *del documento* lo necesita, y un `fillText()` sobre un `<canvas>`
+no cuenta. Así que Fabric medía con la fuente de reserva, **cacheaba** esos anchos de
+carácter y maquetaba con ellos, mientras que lo que se acababa pintando era la fuente
+real. De ahí los tres síntomas a la vez: recuadro y tiradores que no encajan con las
+letras, palabras encimadas (el `Textbox` partía las líneas con anchos equivocados) y texto
+que reflowea solo un instante después de cargar.
+
+Es un problema que la propia documentación de Fabric describe, con su solución: cuando la
+fuente esté disponible de verdad, limpiar su caché de anchos y llamar a `initDimensions()`.
+Eso es `src/client/lib/fonts.ts` (nuevo): `syncCanvasFonts(canvas)` recoge las
+combinaciones (familia, peso) realmente usadas — **incluidos los estilos por carácter**,
+que es donde vive la negrita por selección —, fuerza su carga con `document.fonts.load()`,
+limpia `fabric.cache.clearFontCache()` y re-mide todo el texto. Se llama al cargar una
+página, al restaurar del historial, al aplicar una plantilla, al añadir texto y al cambiar
+familia o peso.
+
+**Es una regresión introducida en la Fase 1**: el template original usaba `WebFont.load`,
+que tenía callback de "ya están listas"; al sustituirlo por `@font-face` autoalojado nunca
+se añadió el paso de re-medir.
+
+Verificado de forma objetiva: forzar una re-medición cuando las fuentes están garantizadas
+devuelve **exactamente las mismas dimensiones** que ya tenía el objeto (`idéntico: true`),
+lo que prueba que la maquetación ya está hecha con las métricas reales. La caja de
+selección difiere del objeto en 1px, que es el grosor del propio borde.
+
+#### Bug C — los tiradores del fondo caían fuera del elemento canvas
+
+El elemento `<canvas>` medía exactamente lo que la página, así que cualquier objeto que
+sobresaliera — sobre todo el fondo, que se escala a *cover* y por definición es más grande
+que la página — tenía sus tiradores fuera del elemento, donde no se pueden ni dibujar ni
+pulsar. Redimensionar el fondo era imposible.
+
+`src/client/lib/workspace.ts` (nuevo) introduce un **margen de trabajo** alrededor de la
+página (`WORKSPACE_PADDING = 320`): el canvas es mayor que la página, el
+`viewportTransform` desplaza el origen para que la coordenada (0,0) siga siendo la esquina
+de la página, y un `clipPath` recorta el pintado a la página — Fabric dibuja los controles
+**después** de aplicar el recorte (`controlsAboveOverlay: true`), así que los tiradores
+siguen visibles y utilizables en el margen. El `clipPath` lleva `excludeFromExport: true`
+para no ensuciar el `canvas_json` guardado: es una propiedad del visor, no del diseño.
+
+- **La exportación no cambia**: `pageExportCrop()` recorta la salida exactamente a la
+  página. Verificado: el PNG/JPEG exportado sigue midiendo 2160×2160 para una página de
+  1080×1080, con margen y todo.
+- `page-canvas.tsx` dibuja la "página" como una tarjeta blanca con sombra **detrás** del
+  canvas (que es transparente fuera del recorte), y el contenedor ya no lleva
+  `overflow-hidden`, que volvería a cortar justo lo que este cambio expone.
+- `canvas-area.tsx` calcula el encaje/zoom contra el tamaño del área de trabajo, no de la
+  página.
+
+**Límite conocido y por qué 320.** Una foto que cubre una página cuadrada sobresale
+`(aspecto − 1) / 2` del ancho por lado: ~270px con una foto 3:2, ~420px con una 16:9.
+Cubrir el peor caso exigiría un canvas de casi el triple del área de la página, y cada
+píxel es memoria real (×4 bytes, ×devicePixelRatio², ×número de páginas). 320 cubre los
+casos habituales; para fotos más panorámicas los tiradores laterales pueden quedar fuera,
+y por eso el panel derecho tiene ahora una sección **Background** (aparece al seleccionar
+el fondo) con un **deslizador de escala** — que escala respecto al centro de la página, no
+al origen del objeto — y botones Cover/Contain para resetear el encuadre. Arrastrar
+siempre funciona, independientemente de los tiradores.
+
+Todo lo anterior verificado contra el **build de producción** (`:8787`, con CSP real —
+§10.3), incluyendo que "Guardar en Twenty" sigue funcionando de punta a punta y que no
+aparece ningún error de consola. Escritura de prueba en `imagenEditada` revertida.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

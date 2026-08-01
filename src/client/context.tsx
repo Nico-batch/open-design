@@ -23,6 +23,7 @@ export interface EditorContextValue {
   activeCanvasId: string | null;
   canvas: fabric.Canvas | null;
   selectedObject: fabric.FabricObject | null;
+  selectionVersion: number;
   canvasWidth: number;
   canvasHeight: number;
   zoom: number;
@@ -45,6 +46,7 @@ export interface EditorContextValue {
     options?: { preserveFraming?: boolean }
   ) => Promise<void> | void;
   setBackgroundImageFit: (fit: "cover" | "contain") => void;
+  setBackgroundScale: (scale: number) => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   toggleBold: () => void;
   deleteSelected: () => void;

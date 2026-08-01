@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from "preact/hooks";
 import { Plus, Copy, Trash2 } from "lucide-preact";
 import { useEditor } from "../context";
 import { PageCanvas } from "./page-canvas";
+import { workspaceSize } from "../lib/workspace";
 
 export function CanvasArea() {
   const {
@@ -14,16 +15,21 @@ export function CanvasArea() {
   const [renameValue, setRenameValue] = useState("");
   const renameRef = useRef<HTMLInputElement>(null);
 
+  // Each page now renders as page + workspace margin (lib/workspace.ts), so the element
+  // being scaled is wider than the design — fit against that, or the margin ends up
+  // pushed outside the viewport and its handles become unreachable again.
+  const workspaceWidth = workspaceSize(canvasWidth, canvasHeight).width;
+
   // Calculate fit scale on mount
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const padding = 120;
     const availW = wrapper.clientWidth - padding;
-    const fit = Math.min(availW / canvasWidth, 1);
+    const fit = Math.min(availW / workspaceWidth, 1);
     setFitScale(fit);
     setZoomRaw(0.58);
-  }, [canvasWidth, canvasHeight]);
+  }, [workspaceWidth]);
 
   // Recalculate on resize
   useEffect(() => {
@@ -32,12 +38,11 @@ export function CanvasArea() {
     const obs = new ResizeObserver(() => {
       const padding = 120;
       const availW = wrapper.clientWidth - padding;
-      const fit = Math.min(availW / canvasWidth, 1);
-      setFitScale(fit);
+      setFitScale(Math.min(availW / workspaceWidth, 1));
     });
     obs.observe(wrapper);
     return () => obs.disconnect();
-  }, [canvasWidth, canvasHeight]);
+  }, [workspaceWidth]);
 
   // Cmd+wheel zoom towards mouse position
   const zoomRef = useRef(zoom);
@@ -108,7 +113,7 @@ export function CanvasArea() {
       {/* Spacer div — its dimensions match the visual (scaled) size so overflow scrollbars work */}
       <div
         style={{
-          width: Math.max((canvasWidth + 80) * zoom, wrapperRef.current?.clientWidth ?? 0),
+          width: Math.max((workspaceWidth + 80) * zoom, wrapperRef.current?.clientWidth ?? 0),
           minHeight: "100%",
           display: "flex",
           justifyContent: "center",
