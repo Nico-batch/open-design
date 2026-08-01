@@ -17,7 +17,15 @@ interface PageCanvasProps {
 }
 
 export function PageCanvas({ page, isActive, width, height, onActivate }: PageCanvasProps) {
-  const { registerCanvas, unregisterCanvas, activeDesign, pages, applyBackgroundToCanvas, applyTextToCanvas } = useEditor();
+  const {
+    registerCanvas,
+    unregisterCanvas,
+    activeDesign,
+    pages,
+    applyBackgroundToCanvas,
+    applyTextToCanvas,
+    syncEffectsFromCanvas,
+  } = useEditor();
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const onActivateRef = useRef(onActivate);
@@ -155,7 +163,12 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
           // preserveFraming: the image is re-fetched on every open, so re-fitting it
           // unconditionally would undo any manual repositioning the operator had saved.
           if (news.imageUrl) {
-            applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover", { preserveFraming: true });
+            const applied = applyBackgroundToCanvas(c, page.id, "image", news.imageUrl, "cover", {
+              preserveFraming: true,
+            });
+            // The refresh swaps the background object, so re-read the effect values from
+            // the replacement rather than from the one that was just discarded.
+            Promise.resolve(applied).then(() => syncEffectsFromCanvas(c));
           }
           if (isBlankPage && news.title) applyTextToCanvas(c, "heading", news.title);
         })
@@ -176,6 +189,8 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
           // Saved text was measured against whatever font was available when it was
           // *created*; re-measure now that we can guarantee the real faces (lib/fonts.ts).
           syncCanvasFonts(c);
+          // Restore the effects panel to whatever this design was saved with.
+          syncEffectsFromCanvas(c);
           refreshFromTwenty(false);
         });
       } catch {

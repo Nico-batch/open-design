@@ -5,6 +5,16 @@ import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive } from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
+import {
+  applyBackgroundEffects,
+  applyScrim,
+  readBackgroundEffects,
+  readScrim,
+  resizeScrim,
+  NO_EFFECTS,
+  type BackgroundEffects,
+  type ScrimKind,
+} from "../lib/effects";
 
 const MAX_HISTORY = 50;
 
@@ -356,6 +366,13 @@ export function useCanvasState() {
               scaleY: previous.scaleY,
             });
             (img as any)._bgFit = (previous as any)._bgFit ?? fit;
+            // Same reasoning as the framing: the blur/darken the operator dialled in for
+            // legibility is their work, and the automatic refresh replacing the image
+            // object must not silently throw it away.
+            if (previous.filters?.length) {
+              img.filters = previous.filters;
+              img.applyFilters();
+            }
           } else {
             fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
             (img as any)._bgFit = fit;
@@ -420,6 +437,46 @@ export function useCanvasState() {
       refreshSelection();
     },
     [getActiveCanvas, canvasWidth, canvasHeight, saveHistory, refreshSelection]
+  );
+
+  // ── Background effects (text legibility over photos) ────────────────
+
+  const [backgroundEffects, setBackgroundEffectsState] = useState<BackgroundEffects>(NO_EFFECTS);
+  const [scrim, setScrimState] = useState<{ kind: ScrimKind; opacity: number }>({
+    kind: "none",
+    opacity: 0.4,
+  });
+
+  /** Re-reads the effect values off the canvas, so the panel reflects a loaded design. */
+  const syncEffectsFromCanvas = useCallback(
+    (canvas: fabric.Canvas) => {
+      setBackgroundEffectsState(readBackgroundEffects(canvas));
+      setScrimState(readScrim(canvas));
+    },
+    []
+  );
+
+  const setBackgroundEffects = useCallback(
+    (effects: BackgroundEffects) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      setBackgroundEffectsState(effects);
+      if (applyBackgroundEffects(canvas, effects)) saveHistory(pageId);
+    },
+    [getActiveCanvas, saveHistory]
+  );
+
+  const setScrim = useCallback(
+    (kind: ScrimKind, opacity: number) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      setScrimState({ kind, opacity });
+      applyScrim(canvas, canvasWidth, canvasHeight, kind, opacity);
+      saveHistory(pageId);
+    },
+    [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
   );
 
   // ── Object manipulation ─────────────────────────────────────────────
@@ -548,6 +605,8 @@ export function useCanvasState() {
       for (const canvas of canvasMapRef.current.values()) {
         applyWorkspaceGeometry(canvas, width, height);
         applyLogoToCanvas(canvas, width, height);
+        // The scrim covers the page, so it has to follow the page's new size.
+        resizeScrim(canvas, width, height);
         canvas.requestRenderAll();
       }
     },
@@ -738,6 +797,11 @@ export function useCanvasState() {
     applyBackgroundToCanvas,
     setBackgroundImageFit,
     setBackgroundScale,
+    backgroundEffects,
+    setBackgroundEffects,
+    scrim,
+    setScrim,
+    syncEffectsFromCanvas,
     updateSelectedObject,
     toggleBold,
     deleteSelected,

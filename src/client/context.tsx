@@ -2,6 +2,7 @@ import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { Design, Template, Page } from "./types";
 import type * as fabric from "fabric";
+import type { BackgroundEffects, ScrimKind } from "./lib/effects";
 
 export interface CanvasSize {
   label: string;
@@ -47,6 +48,13 @@ export interface EditorContextValue {
   ) => Promise<void> | void;
   setBackgroundImageFit: (fit: "cover" | "contain") => void;
   setBackgroundScale: (scale: number) => void;
+
+  // Legibility effects for text over photos (lib/effects.ts)
+  backgroundEffects: BackgroundEffects;
+  setBackgroundEffects: (effects: BackgroundEffects) => void;
+  scrim: { kind: ScrimKind; opacity: number };
+  setScrim: (kind: ScrimKind, opacity: number) => void;
+  syncEffectsFromCanvas: (canvas: fabric.Canvas) => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   toggleBold: () => void;
   deleteSelected: () => void;

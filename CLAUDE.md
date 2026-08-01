@@ -145,7 +145,8 @@ src/
     │   ├── logo.ts             — capa de logo fijo: applyLogoToCanvas/withoutLogo/isLogoObject
     │   ├── background.ts       — capa de fondo: findBackgroundImage/makeBackgroundInteractive (§9.12)
     │   ├── fonts.ts            — carga y re-medición de webfonts en canvas (§9.13 bug B)
-    │   └── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
+    │   ├── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
+    │   └── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
     │   │                         fondo (cover/contain), undo/redo, resize, zoom, negrita
@@ -720,6 +721,54 @@ siempre funciona, independientemente de los tiradores.
 Todo lo anterior verificado contra el **build de producción** (`:8787`, con CSP real —
 §10.3), incluyendo que "Guardar en Twenty" sigue funcionando de punta a punta y que no
 aparece ningún error de consola. Escritura de prueba en `imagenEditada` revertida.
+
+### 9.14 Efectos de legibilidad del texto sobre la foto
+
+Petición del usuario: poder difuminar o similar la imagen «para que sea más fácil poner un
+texto legible encima». Es el problema clásico de texto sobre foto, y en diseño editorial se
+resuelve con tres herramientas que aquí están todas (`src/client/lib/effects.ts`, nuevo;
+UI en la sección **Bg** del sidebar izquierdo, bajo "Text legibility"):
+
+- **Blur** — filtro `fabric.filters.Blur` sobre la imagen de fondo. Útil cuando la foto
+  tiene mucho detalle y el texto se pierde entre él.
+- **Darken** — filtro `fabric.filters.Brightness`, limitado a valores negativos: aquí solo
+  interesa oscurecer, para ganar contraste.
+- **Shade (velo/"scrim")** — una capa aparte sobre la foto, en cuatro modos: `Off`, `All`
+  (velo uniforme), `Down` (degradado transparente arriba → oscuro abajo, para texto en la
+  parte baja) y `Up` (el mismo, invertido). El degradado es lo que suelen usar los
+  layouts editoriales y de redes: da contraste justo donde va el texto sin apagar la foto
+  entera.
+
+Notas de implementación:
+
+- El **velo es un `fabric.Rect` gestionado**, no una propiedad de la imagen: se inserta
+  **justo encima del fondo y debajo de todo lo demás** (`moveObjectTo(bgIndex + 1)`), y no
+  es seleccionable ni recibe eventos — es un telón de fondo, y que se tragara los clics
+  destinados al texto sería insufrible. Lleva `_isScrim`/`_scrimKind` registrados en
+  `fabric.Rect.customProperties`, por la misma razón que el marcador del fondo (§9.12): sin
+  eso Fabric los descarta al guardar y al recargar el velo volvería como un rectángulo
+  negro anónimo que nadie sabe identificar ni quitar.
+- La opacidad vive **dentro del color** (`rgba(...)`, y en los tramos del degradado), no en
+  `opacity` del objeto, para que haya un único sitio que controle la intensidad.
+- Los sliders confirman en **`change`** (al soltar), no en `input`: cada paso de blur
+  re-filtra el bitmap a tamaño completo y hacerlo en cada píxel de arrastre va a tirones.
+- **`applyFilters()` lee píxeles**, así que solo funciona si el canvas no está
+  *tainted* — se cumple porque todas las imágenes son del mismo origen (el proxy
+  `/api/news/:id/image` existe precisamente para eso, §9.3, y las subidas se sirven desde
+  nuestro propio origen). Verificado explícitamente: con blur y oscurecido aplicados, la
+  exportación sigue funcionando y da 2160×2160.
+
+**Bug encontrado y arreglado durante la verificación:** los filtros se perdían al recargar.
+Mismo patrón que el encuadre en §9.12 — el refresco automático desde Twenty sustituye el
+objeto de imagen y el nuevo venía sin filtros. `applyBackgroundToCanvas` ahora también
+traslada `filters` al reemplazo cuando `preserveFraming` está activo (el refresco
+automático), porque el ajuste de legibilidad es trabajo del operador y perderlo en silencio
+en cada apertura es exactamente el fallo que ya se corrigió para la posición.
+
+Verificado contra el **build de producción**: blur y oscurecido se aplican como filtros
+sobre el fondo, el velo se inserta en el orden correcto (`bg → scrim → texto → logo`), la
+exportación no se rompe (2160×2160), y tras guardar y recargar sobreviven los tres ajustes.
+Sin errores de consola.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

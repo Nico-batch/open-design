@@ -52,7 +52,8 @@ const BG_COLORS = [
 ];
 
 export function LeftSidebar() {
-  const { addText, addShape, addImage, setBackground, setBackgroundImageFit, templates, loadTemplate } =
+  const { addText, addShape, addImage, setBackground, setBackgroundImageFit,
+    backgroundEffects, setBackgroundEffects, scrim, setScrim, templates, loadTemplate } =
     useEditor();
   const [activeSection, setActiveSection] = useState<Section | null>("templates");
   const [uploading, setUploading] = useState(false);
@@ -315,6 +316,98 @@ export function LeftSidebar() {
                       class="hidden"
                       onChange={(e) => handleBgUpload((e.target as HTMLInputElement).files)}
                     />
+
+                    {/* ── Legibility over a photo ──────────────────────────
+                        Sliders commit on `change` (pointer release) rather than `input`:
+                        each blur step re-filters the full-size bitmap, which is far too
+                        heavy to run on every pixel of drag. */}
+                    <div class="mt-5 pt-4 border-t border-zinc-200">
+                      <p class="text-zinc-500 text-[11px] font-semibold mb-1">Text legibility</p>
+                      <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
+                        Soften or darken the photo so text on top stays readable.
+                      </p>
+
+                      <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                        Blur
+                        <span class="font-mono">{Math.round(backgroundEffects.blur * 100)}%</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.4"
+                        step="0.01"
+                        class="w-full accent-accent mb-3"
+                        value={backgroundEffects.blur}
+                        onChange={(e) =>
+                          setBackgroundEffects({
+                            ...backgroundEffects,
+                            blur: parseFloat((e.target as HTMLInputElement).value),
+                          })
+                        }
+                      />
+
+                      <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                        Darken
+                        <span class="font-mono">
+                          {Math.round(-backgroundEffects.brightness * 100)}%
+                        </span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.7"
+                        step="0.01"
+                        class="w-full accent-accent mb-4"
+                        value={-backgroundEffects.brightness}
+                        onChange={(e) =>
+                          setBackgroundEffects({
+                            ...backgroundEffects,
+                            brightness: -parseFloat((e.target as HTMLInputElement).value),
+                          })
+                        }
+                      />
+
+                      <p class="text-zinc-400 text-[11px] mb-2">Shade</p>
+                      <div class="grid grid-cols-4 gap-1 mb-2">
+                        {([
+                          { kind: "none", label: "Off" },
+                          { kind: "solid", label: "All" },
+                          { kind: "bottom", label: "Down" },
+                          { kind: "top", label: "Up" },
+                        ] as const).map(({ kind, label }) => (
+                          <button
+                            key={kind}
+                            class={`py-1 rounded-md border text-[10px] cursor-pointer transition-all ${
+                              scrim.kind === kind
+                                ? "bg-accent/20 border-accent text-accent"
+                                : "bg-transparent border-zinc-300 text-zinc-400 hover:text-zinc-900"
+                            }`}
+                            onClick={() => setScrim(kind, scrim.opacity)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {scrim.kind !== "none" && (
+                        <>
+                          <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                            Strength
+                            <span class="font-mono">{Math.round(scrim.opacity * 100)}%</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="0.05"
+                            max="0.9"
+                            step="0.05"
+                            class="w-full accent-accent"
+                            value={scrim.opacity}
+                            onChange={(e) =>
+                              setScrim(scrim.kind, parseFloat((e.target as HTMLInputElement).value))
+                            }
+                          />
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
 
