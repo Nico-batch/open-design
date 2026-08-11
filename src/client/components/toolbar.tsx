@@ -5,6 +5,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
+  Grid3x3,
   Download,
   Save,
   Send,
@@ -35,6 +36,8 @@ export function Toolbar() {
     activeDesign,
     renameDesign,
     navigate,
+    showGuides,
+    toggleGuides,
   } = useEditor();
 
   const [showSizeDropdown, setShowSizeDropdown] = useState(false);
@@ -191,6 +194,17 @@ export function Toolbar() {
           title="Fit to screen"
         >
           <Maximize size={15} />
+        </button>
+        <button
+          class={`p-1.5 rounded-md bg-transparent border-none cursor-pointer transition-all ${
+            showGuides
+              ? "text-accent bg-accent/15 hover:bg-accent/25"
+              : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
+          }`}
+          onClick={toggleGuides}
+          title="Cuadrícula de tercios — solo como guía, no sale en la imagen exportada"
+        >
+          <Grid3x3 size={15} />
         </button>
 
         <div class="w-px h-5 bg-zinc-600 mx-1" />

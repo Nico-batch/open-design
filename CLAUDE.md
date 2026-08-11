@@ -157,6 +157,7 @@ src/
     │   └── use-router.ts       — router mínimo, parsea `/design/:id`
     └── components/
         ├── editor.tsx, canvas-area.tsx, page-canvas.tsx, pages-bar.tsx
+        ├── guides-overlay.tsx      — cuadrícula de tercios, capa DOM fuera de Fabric (§9.23)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
 
@@ -1240,6 +1241,50 @@ edición, al escribir, al mover el cursor al principio, al llevarlo al final y a
 una palabra baja, el desplazamiento se queda en **0** y la barra en `top: 0` (antes: 420 y
 −420). El textarea vive ya en `DIV#fabric-textarea-host`. Las dos suites completas de §9.21
 siguen pasando enteras, así que el textarea sigue recibiendo el teclado con normalidad.
+
+### 9.23 Cuadrícula de tercios
+
+Petición del usuario: «quiero poder añadir una cuadrícula para poder centrar las cosas».
+Eligió **solo guía visual** (sin imán al arrastrar) y **solo las líneas de los tercios**.
+Botón con icono de retícula en el toolbar, junto al zoom; apagada por defecto.
+
+**Es una capa del DOM, no objetos de Fabric**, y esa es la decisión que importa
+([`guides-overlay.tsx`](src/client/components/guides-overlay.tsx)). Meterla en el lienzo
+habría obligado a excluirla a mano de cuatro sitios a la vez: del `canvas_json` (no es parte
+del diseño), del historial (cada encendido sería un paso de deshacer), de la selección (una
+guía no es algo que se pulse) y sobre todo **de la exportación** — `exportPNG` y
+`exportUploadBlob` leen el lienzo **en vivo**, que es justamente por lo que el logo sí sale
+en la imagen final (§4). Una guía colada dentro del JPEG que se sube a Twenty habría sido un
+mal día. Como hermana del `<canvas>` en el DOM, nada de eso puede pasar por construcción.
+
+Dos detalles que no son evidentes:
+
+- **El grosor se divide por el zoom.** Todo el árbol del lienzo va escalado por CSS
+  (`canvas-area.tsx`), así que una línea de 1px se pintaría a 0.58px con el zoom por defecto
+  y casi desaparece. `1 / zoom` la mantiene en un píxel real a cualquier zoom — el mismo
+  truco de escala inversa que ya usan las cabeceras de página.
+- **Núcleo claro con halo oscuro** (`rgba(255,255,255,.7)` + `box-shadow` negro). Un color
+  único no vale: debajo puede haber la tarjeta blanca, una foto clara o una oscura.
+  Verificado en los tres casos, no supuesto.
+
+Se dibuja sobre **la página**, no sobre el área de trabajo: el margen existe para alcanzar
+los tiradores que se salen (§9.13), y los tercios solo significan algo dentro de lo que se
+exporta.
+
+`showGuides` vive junto al zoom en `use-canvas.ts`, como lo que es: un ajuste del visor. No
+se guarda en ningún sitio, así que al recargar vuelve a estar apagada.
+
+**Verificado contra el build de producción** (`:8788`, CSP real): aparecen cuatro líneas
+exactamente en 1/3 y 2/3 de cada eje, el overlay coincide píxel a píxel con la tarjeta de la
+página, no intercepta el ratón (`pointer-events: none`) y el texto que hay debajo se sigue
+pudiendo seleccionar; tras guardar, el `canvas_json` no contiene ningún objeto añadido; y la
+comprobación que de verdad importa — **el PNG exportado es idéntico byte a byte con la
+cuadrícula encendida y apagada** (mismo SHA-256), sigue midiendo 2160×2160. Sin errores de
+consola.
+
+**Lo que esto NO hace**, por decisión del usuario: no hay imán ni líneas de centro. Los
+tercios caen en 1/3 y 2/3, así que para centrar exacto se sigue yendo a ojo. Añadir los dos
+ejes centrales sería una entrada más en la lista de fracciones de `guides-overlay.tsx`.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

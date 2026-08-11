@@ -78,6 +78,8 @@ export function useCanvasState() {
   const [canvasHeight, setCanvasHeight] = useState(1080);
   const [zoom, setZoom] = useState(0.58);
   const [fitScale, setFitScale] = useState(0.58);
+  // Purely a view setting, like the zoom: never saved with the design, never exported.
+  const [showGuides, setShowGuides] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const isRestoringRef = useRef<Set<string>>(new Set());
@@ -995,6 +997,8 @@ export function useCanvasState() {
     setZoomRaw: setZoom,
     fitScale,
     setFitScale,
+    showGuides,
+    toggleGuides: () => setShowGuides((v) => !v),
     addText,
     applyTextToCanvas,
     addShape,

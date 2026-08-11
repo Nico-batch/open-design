@@ -5,6 +5,7 @@ import { applyLogoToCanvas } from "../lib/logo";
 import { findBackgroundImage, makeBackgroundInteractive, downscaleOversizedSource } from "../lib/background";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
+import { GuidesOverlay } from "./guides-overlay";
 import { api } from "../api";
 import { coerceTwentyObjectType } from "../lib/twenty";
 import type { Page, TwentyRecord } from "../types";
@@ -26,6 +27,7 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
     applyBackgroundToCanvas,
     applyTextToCanvas,
     syncEffectsFromCanvas,
+    showGuides,
   } = useEditor();
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -244,6 +246,7 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       <div class="absolute inset-0">
         <canvas ref={canvasElRef} />
       </div>
+      {showGuides && <GuidesOverlay width={width} height={height} />}
     </div>
   );
 }

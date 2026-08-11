@@ -31,6 +31,9 @@ export interface EditorContextValue {
   setZoomRaw: (z: number) => void;
   fitScale: number;
   setFitScale: (s: number) => void;
+  /** Rule-of-thirds guides over the page — a view setting, not part of the design. */
+  showGuides: boolean;
+  toggleGuides: () => void;
 
   // Canvas actions
   addText: (preset: "heading" | "subheading" | "body", customText?: string) => void;
