@@ -104,3 +104,43 @@ export function scaleAboutPageCenter(
   });
   obj.setCoords();
 }
+
+/** Id of the element that hosts Fabric's hidden textarea — see installTextareaHost. */
+const TEXTAREA_HOST_ID = "fabric-textarea-host";
+
+/**
+ * Stops editing text from scrolling the whole editor out of view.
+ *
+ * To receive keystrokes Fabric parks an invisible 1×1 textarea at the caret, positioned in
+ * *document* coordinates (`_calcTextareaPosition` ends with `p += canvas._offset`), and
+ * moves it again on every caret or selection change. On a zoomed page that position lands
+ * far below the fold — measured at `top: 1364px` in a 1000px-tall window — so the browser
+ * scrolls the focused element into view. `overflow: hidden` on html/body does not prevent
+ * that: it suppresses the scrollbar and user scrolling, but a container is still scrollable
+ * programmatically. The editor slid up, hiding the toolbar and exposing the page background
+ * as a black band underneath.
+ *
+ * The cure is to give Fabric somewhere else to put that textarea: a fixed, viewport-sized,
+ * clipped, non-interactive host. It is still scrollable — its content reaches past its
+ * bounds — so the browser scrolls *it* to reveal the caret and stops there, because the host
+ * itself is already entirely on screen. Nothing the operator can see moves.
+ *
+ * Registered through `IText.ownDefaults` rather than assigned per object. Fabric merges
+ * ownDefaults into every instance as it is constructed, so this covers text added from the
+ * toolbar, restored from a saved design, rebuilt by undo and applied from a template alike —
+ * the same four entry points that had to be found one by one in lib/background.ts.
+ * Call once, before any canvas exists.
+ */
+export function installTextareaHost(): void {
+  if (document.getElementById(TEXTAREA_HOST_ID)) return;
+
+  const host = document.createElement("div");
+  host.id = TEXTAREA_HOST_ID;
+  host.style.cssText =
+    "position:fixed;top:0;left:0;width:100%;height:100%;" +
+    "overflow:hidden;pointer-events:none;z-index:-1;";
+  document.body.appendChild(host);
+
+  (fabric.IText.ownDefaults as { hiddenTextareaContainer?: HTMLElement | null })
+    .hiddenTextareaContainer = host;
+}

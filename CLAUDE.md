@@ -148,6 +148,7 @@ src/
     │   ├── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
     │   ├── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
     │   └── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
+    │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
     │   │                         fondo (cover/contain), undo/redo, resize, zoom, negrita
@@ -1187,6 +1188,58 @@ undo restaura exactamente el mismo recuento de píxeles; la exportación sigue d
 y tras **recargar** la página la palabra sigue roja y en Playfair Display mientras el resto
 sigue en Montserrat. El selector de emojis sigue insertando en el cursor. Sin errores de
 consola en ningún paso.
+
+### 9.22 La interfaz se desplazaba al seleccionar texto
+
+Reporte del usuario: «en ocasiones al seleccionar una palabra el sitio web como que se
+sube, escondiendo la parte superior de la interfaz y mostrando una parte negra abajo», y
+solo cuando la palabra queda por debajo del centro de la pantalla.
+
+**Causa.** Para recibir las pulsaciones, Fabric aparca un `<textarea>` invisible de 1×1 en
+la posición del cursor, lo cuelga de `document.body` y lo **recoloca en cada movimiento del
+cursor o de la selección** (`updateTextareaPosition`). Sus coordenadas son **del documento**,
+no de la ventana: `_calcTextareaPosition` termina sumando `canvas._offset`. Con la página
+ampliada eso cae muy por debajo del pliegue —medido: `top: 1364px` en una ventana de 1000px—
+así que el navegador desplaza el elemento enfocado hasta hacerlo visible.
+
+Lo que despista es que `html, body, #app` **ya tienen `overflow: hidden`**
+([`styles.css`](src/client/styles.css)). Eso no lo impide: `overflow: hidden` quita la barra
+y el desplazamiento por parte del usuario, pero el contenedor **sigue siendo desplazable por
+código**, y eso incluye el "llevar el foco a la vista" del navegador. De ahí que se moviera
+sin que apareciera ninguna barra y que asomara el fondo de la página como una banda negra.
+
+**No es una regresión de §9.21.** Comprobado sacando el build del commit anterior
+(`6df850a`, antes del formato por rango) y repitiendo la medición: exactamente el mismo
+desplazamiento de 420px. Lo que cambió es la frecuencia — seleccionar palabras pasó a ser
+algo que se hace todo el rato, así que un fallo latente se volvió cotidiano.
+
+**Arreglo:** `installTextareaHost()` en [`lib/workspace.ts`](src/client/lib/workspace.ts),
+llamado una vez desde `main.tsx` antes de que exista ningún canvas (mismo patrón que
+`installEmojiFontFallback`, §9.20). Crea un contenedor fijo del tamaño de la ventana,
+recortado y sin eventos de puntero, y se lo pasa a Fabric por `hiddenTextareaContainer` —
+que existe justo para esto («An alternative to attaching to the document.body»). El textarea
+sigue quedando fuera de los límites de ese contenedor, así que el navegador **lo desplaza a
+él** para revelar el cursor y se detiene ahí: el contenedor ya está entero en pantalla, y
+nada de lo que ve el operador se mueve.
+
+Se registra a través de `IText.ownDefaults` y no objeto por objeto. Fabric fusiona
+`ownDefaults` en cada instancia al construirla, así que cubre de una vez el texto añadido
+desde la barra, el restaurado de un diseño guardado, el reconstruido por deshacer y el de
+una plantilla — los mismos cuatro puntos de entrada que en §9.18 hubo que ir encontrando de
+uno en uno. **Ojo:** `hiddenTextareaContainer` está en `iTextDefaultValues`, de modo que cada
+instancia recibe un `null` propio; asignarlo en el prototipo **no funciona**, lo tapa.
+
+**Relacionado, ya arreglado en §9.21:** `restoreTextFocus` enfoca con
+`focus({ preventScroll: true })`. Sin eso el desplazamiento ocurría con el puntero aún
+pulsado sobre un control del panel, el botón se movía de debajo del cursor y no llegaba a
+recibir el clic — así fue como el botón Guardar dejó de responder.
+
+**Verificado contra el build de producción** (`:8788`, CSP real) midiendo
+`documentElement.scrollTop` y la posición de la barra superior en cada paso: al entrar en
+edición, al escribir, al mover el cursor al principio, al llevarlo al final y al seleccionar
+una palabra baja, el desplazamiento se queda en **0** y la barra en `top: 0` (antes: 420 y
+−420). El textarea vive ya en `DIV#fabric-textarea-host`. Las dos suites completas de §9.21
+siguen pasando enteras, así que el textarea sigue recibiendo el teclado con normalidad.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
