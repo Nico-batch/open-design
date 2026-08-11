@@ -56,6 +56,11 @@ export interface EditorContextValue {
   setScrim: (kind: ScrimKind, opacity: number) => void;
   syncEffectsFromCanvas: (canvas: fabric.Canvas) => void;
   updateSelectedObject: (props: Record<string, unknown>) => void;
+  /** Text formatting that respects a character selection — see lib/text-styles.ts. */
+  applyTextStyle: (props: Record<string, unknown>) => void;
+  clearTextStyle: () => void;
+  /** Returns keyboard focus to the text box after a panel field has taken it. */
+  restoreTextFocus: () => void;
   toggleBold: () => void;
   insertEmoji: (emoji: string) => void;
   deleteSelected: () => void;

@@ -146,7 +146,8 @@ src/
     │   ├── background.ts       — capa de fondo: findBackgroundImage/makeBackgroundInteractive (§9.12)
     │   ├── fonts.ts            — carga y re-medición de webfonts en canvas (§9.13 bug B)
     │   ├── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
-    │   └── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
+    │   ├── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
+    │   └── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
     │   │                         fondo (cover/contain), undo/redo, resize, zoom, negrita
@@ -171,7 +172,7 @@ Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 |---|---|
 | Presets de tamaño IG (1080×1080, 1080×1350, 1080×1920) | Hecho — [`src/client/context.tsx`](src/client/context.tsx) `CANVAS_SIZES`. Las 4 medidas LinkedIn se quitaron. |
 | Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.png`, faro blanco, fondo transparente) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica; el archivo debe tener canal alfa real (RGBA), un JPG opaco se ve como un cuadro sólido encima del fondo. |
-| Negrita en selección (estilos por carácter) | Hecho — `toggleBold` en [`use-canvas.ts`](src/client/hooks/use-canvas.ts). Si el `Textbox`/`IText` está en edición con un rango de caracteres seleccionado, aplica `setSelectionStyles({fontWeight}, start, end)` (Fabric v6, per-character); si no, alterna el `fontWeight` del objeto entero (comportamiento previo). Verificado end-to-end: el `canvas_json` guardado incluye `styles: [{start, end, style: {fontWeight: "700"}}]` solo en el rango seleccionado. |
+| Negrita en selección (estilos por carácter) | Hecho, y **generalizado en §9.21** a color, tamaño, tipografía, cursiva, subrayado y contorno. `toggleBold` conserva su comportamiento (aplica al rango seleccionado si el `Textbox` está en edición, al cuadro entero si no) pero ahora escribe a través de `applyTextStyle`, que es el único punto por el que pasa el formato de texto. |
 | Fuentes autoalojadas | Hecho — `public/fonts/<Familia>/<peso>.woff2` (36 archivos, solo subset *latin*, cubre acentos/ñ del español) + [`src/client/fonts.css`](src/client/fonts.css) (`@font-face` generado, importado desde `main.tsx`). Se quitó `WebFont.load` de `app.tsx`, el `<link>` de Google Fonts de `index.html`, y la dependencia `webfontloader`. |
 | Encaje imagen origen (cover/contain) | Hecho — `fitBackgroundImage` en `use-canvas.ts`, con `setBackground(type, value, fit)` y `setBackgroundImageFit(fit)` para cambiar el encaje sin re-subir. UI: dos botones Cover/Contain en `left-sidebar.tsx` (sección Bg). El color de fondo del canvas ya sirve de "letterbox" para `contain`. Además el fondo se puede **arrastrar y redimensionar a mano** (§9.12); Cover/Contain hacen de reset. |
 | Export PNG (cliente, 2x) | Sin cambios de fondo — sigue en [`use-canvas.ts`](src/client/hooks/use-canvas.ts) `exportPNG`, `multiplier: 2`. Pendiente para Fase 2: exponer el `dataURL`/blob en vez de forzar `<a download>`, para el flujo con Twenty/n8n. |
@@ -1085,6 +1086,107 @@ lienzo **no se descarga ni un byte** de la fuente; al escribir `🇪🇸` sale l
 "ES"); el selector inserta en el cursor sin sacar el texto de edición; sobrevive a guardar y
 recargar; y la exportación sigue dando 2160×2160 con los emojis pintados. Sin errores de
 consola.
+
+### 9.21 Formato por rango de caracteres
+
+Petición del usuario: «si tengo un texto "Este comentario es de prueba." poder poner la
+palabra *prueba* de otro color o algo por el estilo. Actualmente pilla todo el texto
+cualquier formato que aplique». Hasta ahora la **negrita** era la única excepción (§4): el
+resto de controles del panel derecho se aplicaban siempre al cuadro entero.
+
+Ahora respetan la selección **color, tamaño, tipografía, cursiva, subrayado y contorno**.
+Siguen siendo del cuadro entero **alineación, interlineado, espaciado y opacidad**, y no por
+decisión de diseño sino porque Fabric no puede guardarlas por carácter (ver abajo).
+
+**Dónde vive.** [`src/client/lib/text-styles.ts`](src/client/lib/text-styles.ts) (nuevo)
+concentra el conocimiento de Fabric; `applyTextStyle` en
+[`use-canvas.ts`](src/client/hooks/use-canvas.ts) es **el único punto** por el que pasa el
+formato de texto, y el panel solo decide qué propiedad manda. `toggleBold` se reescribió
+encima de él: lo único que le queda propio es decidir hacia qué lado alternar.
+
+#### Lo que decide el diseño (leído en el código de Fabric 6.9.1, no supuesto)
+
+1. **Qué se puede guardar por carácter lo dicta `styleProperties`**
+   (`shapes/Text/constants.ts`): `fontSize`, `fontWeight`, `fontFamily`, `fontStyle`,
+   `underline`, `overline`, `linethrough`, `stroke`, `strokeWidth`, `fill`, `deltaY`,
+   `textBackgroundColor`, `textDecorationThickness`. Lo que no está en esa lista se guarda
+   y **se ignora en silencio** al pintar. La trampa está en el contorno: `paintFirst`,
+   `strokeLineJoin` y `strokeUniform` parecen propiedades de texto pero son solo de objeto,
+   así que `splitTextStyleProps` manda `stroke`/`strokeWidth` al rango y esos tres al
+   objeto (inocuo: el paso de trazo se salta los caracteres que no tienen). La lista se
+   **deriva** de `fabric.FabricText._styleProperties` en vez de copiarse, por el mismo
+   criterio que el tope de textura de §9.18.
+2. **Perder el foco del DOM NO cierra la edición.** El manejador `blur` de Fabric
+   (`ITextKeyBehavior`) es literalmente `blur() { this.abortCursorAnimation(); }`;
+   `exitEditing` solo se alcanza desde interacciones del propio lienzo. Por eso un
+   `<input type="color">` que abre el diálogo del sistema **conserva la selección**, que era
+   el riesgo principal del trabajo. Lo único que se pierde es el dibujo del resaltado, y se
+   recupera con `renderCursorOrSelection()` (solo exige `isEditing`, no foco).
+3. **Escribir `undefined` borra el ajuste**, no lo guarda: `_extendStyles` pasa la
+   declaración fusionada por `pickBy(v => v !== undefined)`. Sobre eso está construido
+   "Quitar formato" para un rango; para el cuadro entero se usa `removeStyle(prop)`.
+4. **Un cursor sin selección no puede llevar estilo**: `setSelectionStyles` recorre
+   `start..end`, así que con el cursor plegado no escribe nada, y Fabric no tiene "estilo
+   pendiente para lo siguiente que se teclee". Por eso `textRange()` devuelve `null` con el
+   cursor plegado y se cae al cuadro entero — la misma regla que ya usaba la negrita.
+5. **Índices planos, siempre por `get/setSelectionStyles`.** `Textbox` remapea líneas
+   gráficas a lógicas con su `_styleMap`; tocar `obj.styles[línea][carácter]` a mano se
+   descuadra en cuanto el texto va en varias líneas.
+
+**Persistencia: cero trabajo.** `Text.toObject` incluye siempre `styles` y todo el guardado
+pasa por `withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()))`, que no filtra nada.
+Los estilos por palabra viajan solos en `canvas_json` y sobreviven a guardar, recargar y
+undo/redo. `collectUsedFaces` (§9.13 bug B) ya recorría los estilos por carácter, así que un
+cambio de tipografía o peso en un rango se re-mide gratis.
+
+**Conflicto cuadro/palabra.** Cambiar el color con el cuadro entero seleccionado **no** borra
+las palabras coloreadas a mano — el valor por carácter manda al pintar, y se decidió
+conservarlo (como Word o Canva). La salida es el botón **Quitar formato**, que limpia la
+selección si la hay y, si no, todos los ajustes por palabra del cuadro.
+
+#### Tres bugs encontrados durante la verificación
+
+Ninguno se ve leyendo el código; los tres salieron al probar con ratón y teclado reales.
+
+- **El lienzo no repintaba el color.** `setSelectionStyles` muta el mapa de estilos sin pasar
+  por `set()`, así que **nunca marca el objeto como sucio** y Fabric vuelve a estampar el
+  bitmap cacheado. La palabra se quedaba del color viejo hasta que algo invalidaba la caché,
+  lo que hacía parecer que solo funcionaban tamaño y tipografía (esos llaman a
+  `initDimensions`, que sí la invalida). `applyTextStyle`/`clearTextStyle` ponen `dirty = true`
+  explícitamente, igual que ya hacía `lib/fonts.ts` al re-medir.
+- **Enter en un campo del panel se comía la palabra.** Al devolver el foco al lienzo *durante*
+  el keydown, la acción por defecto de la tecla la recibía el cuadro de texto, y Enter ahí
+  **sustituye los caracteres seleccionados por un salto de línea**: confirmar un color
+  borraba la palabra que se estaba formateando (el texto quedaba como `Este comentario es de` + salto + `.`). Se cancela la
+  pulsación (`preventDefault`) antes de mover el foco.
+- **El botón Guardar dejó de responder.** Enfocar el textarea oculto de Fabric desplaza el
+  documento (Fabric lo aparca en la posición del texto, fuera del viewport si hay zoom), y
+  eso ocurría con el puntero aún pulsado sobre el control: el botón se movía de debajo del
+  cursor y nunca recibía el clic. Se enfoca con `focus({ preventScroll: true })`.
+
+**Foco: qué lleva `preventDefault` y qué no.** Los botones y las muestras de color llevan
+`onMouseDown` con `preventDefault` (como ya hacían la negrita y el selector de emojis), así
+que no roban el foco. Los campos que hay que enfocar para escribir —hexadecimal, tamaño,
+desplegable de tipografía— no pueden, y devuelven el foco al lienzo **con Enter**, no con
+`change`: `change` también salta al perder el foco, es decir justo cuando el operador acaba
+de pulsar otro control, y quitárselo ahí sería pelearse con él.
+
+**Valores mixtos.** Si la selección abarca valores distintos, el campo se muestra vacío con
+un `placeholder` "varios" y los botones de estilo solo se marcan activos si **todos** los
+caracteres lo tienen; si no, el panel mentiría sobre lo que hay seleccionado.
+
+**Verificado contra el build de producción** (`pnpm run build && pnpm run start`, `:8788`,
+con la CSP real — regla de §10.3/§9.11), con ratón y teclado reales y midiendo los píxeles
+pintados, no solo el modelo: colorear *prueba* deja `styles: [{start: 22, end: 28, style:
+{fill}}]` y el `fill` del cuadro intacto; aparecen píxeles rojos y el resto sigue oscuro;
+tamaño, cursiva, tipografía y contorno se acumulan sobre ese mismo rango sin tocar el cuadro;
+el contorno guarda `stroke`/`strokeWidth` por carácter y `paintFirst` en el objeto; con el
+cursor plegado la muestra de color recolorea el cuadro **y la palabra conserva el suyo**; la
+negrita sigue alternando solo el rango en los dos sentidos; "Quitar formato" lo deja limpio;
+undo restaura exactamente el mismo recuento de píxeles; la exportación sigue dando 2160×2160;
+y tras **recargar** la página la palabra sigue roja y en Playfair Display mientras el resto
+sigue en Montserrat. El selector de emojis sigue insertando en el cursor. Sin errores de
+consola en ningún paso.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

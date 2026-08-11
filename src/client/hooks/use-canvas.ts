@@ -9,6 +9,16 @@ import {
   normalizeBackgroundSource,
 } from "../lib/background";
 import { syncCanvasFonts, containsEmoji } from "../lib/fonts";
+import {
+  textRange,
+  isTextObject,
+  splitTextStyleProps,
+  summarizeTextStyle,
+  changesMetrics,
+  changesFontFace,
+  STYLE_PROPERTIES,
+  BLANK_STYLE,
+} from "../lib/text-styles";
 import { applyWorkspaceGeometry, applyWorkspaceClip, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 import {
   applyBackgroundEffects,
@@ -153,8 +163,29 @@ export function useCanvasState() {
     // wrong width — the same trap as any other webfont (see lib/fonts.ts). Re-measure
     // once the face is really there.
     canvas.on("text:changed", (e) => {
+      // Typing changes which characters are selected without firing
+      // text:selection:changed (updateFromTextArea assigns the indices directly), so the
+      // panel has to be nudged from here too or it would keep showing the style of the
+      // characters that *used* to be selected.
+      refreshSelection();
       const text = (e.target as fabric.FabricText | undefined)?.text;
       if (text && containsEmoji(text)) syncCanvasFonts(canvas);
+    });
+
+    // Per-character formatting: the right sidebar reads the style of whatever characters
+    // are selected right now, so it has to re-render as the selection moves. These only
+    // bump the counter — deliberately no reading of selectionStart/End here, because the
+    // public setSelectionStart/End setters fire this event *before* assigning the new
+    // value. The panel reads the live object when it renders, which Preact schedules
+    // after the current call stack, so it always sees the settled indices.
+    canvas.on("text:selection:changed", () => {
+      if (activeCanvasIdRef.current === pageId) refreshSelection();
+    });
+    canvas.on("text:editing:entered", () => {
+      if (activeCanvasIdRef.current === pageId) refreshSelection();
+    });
+    canvas.on("text:editing:exited", () => {
+      if (activeCanvasIdRef.current === pageId) refreshSelection();
     });
 
     // Initial history snapshot
@@ -163,7 +194,7 @@ export function useCanvasState() {
       historyMapRef.current.set(pageId, { entries: [json], index: 0 });
       updateUndoRedoState(pageId);
     }, 100);
-  }, [saveHistory, updateUndoRedoState]);
+  }, [saveHistory, updateUndoRedoState, refreshSelection]);
 
   const unregisterCanvas = useCallback((pageId: string) => {
     canvasMapRef.current.delete(pageId);
@@ -529,42 +560,145 @@ export function useCanvasState() {
     [getActiveCanvas, selectedObject, saveHistory, refreshSelection]
   );
 
-  // Toggles bold. If the object is being edited with a text range selected, applies
-  // per-character styles to just that range (Fabric's setSelectionStyles); otherwise
-  // toggles the whole object's fontWeight, same as the other text properties.
-  const toggleBold = useCallback(() => {
+  /**
+   * The single way text formatting gets written, and the reason a word can be styled on
+   * its own instead of the whole box.
+   *
+   * With characters selected while editing, the properties Fabric can hold per character
+   * go to just those characters (`setSelectionStyles`); anything else in the same call —
+   * `paintFirst` and friends from the outline controls — still lands on the object,
+   * because Fabric has nowhere else to put it. With no selection it falls through to
+   * `updateSelectedObject`, so every control keeps its old whole-box behaviour when
+   * nothing is highlighted. See lib/text-styles.ts for the rules.
+   *
+   * Note that a whole-box write deliberately does *not* wipe existing per-character
+   * overrides: Fabric renders the character value over the object one, so a word coloured
+   * by hand stays that colour. Clearing it is what `clearTextStyle` is for.
+   */
+  const applyTextStyle = useCallback(
+    (props: Record<string, unknown>) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId || !selectedObject) return;
+
+      const range = textRange(selectedObject);
+      if (!range || !isTextObject(selectedObject)) {
+        updateSelectedObject(props);
+        return;
+      }
+      const obj = selectedObject;
+
+      const [perChar, onObject] = splitTextStyleProps(props);
+      if (Object.keys(onObject).length > 0) obj.set(onObject as Partial<fabric.FabricObject>);
+      if (Object.keys(perChar).length > 0) {
+        obj.setSelectionStyles(perChar, range.start, range.end);
+      }
+
+      const keys = Object.keys(props);
+      // setSelectionStyles mutates the styles map straight through, without going near
+      // set(), so it never marks the object dirty — and a cached object is re-blitted from
+      // the bitmap it was last drawn into. The word kept its old colour on screen until
+      // something else happened to invalidate the cache, which made it look as though only
+      // size and font worked (those call initDimensions, which does invalidate it).
+      obj.dirty = true;
+      // Same order, and for the same reason, as everywhere else in this hook: Fabric
+      // re-measures on its own but the controls keep the coordinates they were drawn with
+      // until setCoords() runs, which is what left the selection box a size behind.
+      if (changesMetrics(keys)) obj.initDimensions();
+      obj.setCoords();
+      canvas.requestRenderAll();
+      // Clicking a panel control blurs Fabric's hidden textarea, which stops the caret
+      // animation and wipes the highlight off the upper canvas. Editing itself survives
+      // (blur() only aborts that animation), so repainting brings the highlighted word
+      // back and the operator can keep formatting the same selection.
+      obj.renderCursorOrSelection();
+      saveHistory(pageId);
+      refreshSelection();
+
+      if (changesFontFace(keys)) {
+        // A weight or family that was never fetched measures against the fallback (see
+        // lib/fonts.ts). collectUsedFaces already walks per-character styles, so a
+        // per-range font change is picked up without any extra work here.
+        syncCanvasFonts(canvas).then(() => {
+          obj.setCoords();
+          canvas.requestRenderAll();
+          obj.renderCursorOrSelection();
+          refreshSelection();
+        });
+      }
+    },
+    [getActiveCanvas, selectedObject, saveHistory, refreshSelection, updateSelectedObject]
+  );
+
+  /**
+   * Drops per-character overrides so the text falls back to the box's own values: from the
+   * selected characters if there are any, from the whole box otherwise. The escape hatch
+   * for "I coloured a word and now I want it back to normal".
+   */
+  const clearTextStyle = useCallback(() => {
     const canvas = getActiveCanvas();
     const pageId = activeCanvasIdRef.current;
-    if (!canvas || !pageId || !selectedObject) return;
-    if (!(selectedObject instanceof fabric.Textbox || selectedObject instanceof fabric.IText)) return;
-    const obj = selectedObject as fabric.IText;
+    if (!canvas || !pageId || !isTextObject(selectedObject)) return;
+    const obj = selectedObject;
+    const range = textRange(obj);
 
-    const start = obj.selectionStart;
-    const end = obj.selectionEnd;
-    const hasRangeSelected = obj.isEditing && typeof start === "number" && typeof end === "number" && start !== end;
-
-    if (hasRangeSelected) {
-      const styles = obj.getSelectionStyles(start, end, true);
-      const allBold = styles.length > 0 && styles.every((s) => s.fontWeight === "700" || s.fontWeight === 700);
-      obj.setSelectionStyles({ fontWeight: allBold ? "400" : "700" }, start, end);
-      obj.initDimensions?.();
+    if (range) {
+      // Writing `undefined` deletes the override rather than storing one — Fabric filters
+      // the merged declaration through pickBy(v => v !== undefined). See lib/text-styles.ts.
+      obj.setSelectionStyles(BLANK_STYLE, range.start, range.end);
     } else {
-      const isBold = (obj as any).fontWeight === "700" || (obj as any).fontWeight === "bold";
-      obj.set({ fontWeight: isBold ? "400" : "700" } as any);
+      for (const prop of STYLE_PROPERTIES) obj.removeStyle(prop);
     }
+
+    // removeStyle doesn't set the _forceClearCache flag that setSelectionStyles does, so
+    // the re-measure has to be explicit on both paths — as does invalidating the object's
+    // cached bitmap, which neither of them touches.
+    obj.dirty = true;
+    obj.initDimensions();
     obj.setCoords();
     canvas.requestRenderAll();
+    obj.renderCursorOrSelection();
     saveHistory(pageId);
     refreshSelection();
 
-    // Bold usually means pulling in a weight that was never fetched — re-measure once
-    // it lands, otherwise the box keeps the regular-weight metrics.
     syncCanvasFonts(canvas).then(() => {
       obj.setCoords();
       canvas.requestRenderAll();
       refreshSelection();
     });
   }, [getActiveCanvas, selectedObject, saveHistory, refreshSelection]);
+
+  /**
+   * Hands keyboard focus back to the text box after a panel field that needed it is done
+   * with it — Fabric does the same on canvas click. Editing survives the field taking
+   * focus, so the styling works either way, but without this the arrow keys would keep
+   * going to the field and the operator couldn't extend the selection to the next word
+   * without clicking the canvas again.
+   *
+   * Only safe to call once the field has committed (change/blur), never on every
+   * keystroke: pulling focus mid-input would make the field impossible to type in.
+   */
+  const restoreTextFocus = useCallback(() => {
+    if (isTextObject(selectedObject) && selectedObject.isEditing) {
+      // preventScroll is not optional here. Fabric parks its hidden textarea at the text's
+      // position on the page, which for a zoomed-in design sits outside the viewport, and
+      // a plain focus() scrolls the whole document to reveal it. That fires while the
+      // pointer is still down on whatever control triggered this, so the button slides out
+      // from under the cursor and never receives its click — pressing Save right after
+      // editing a colour silently did nothing.
+      selectedObject.hiddenTextarea?.focus({ preventScroll: true });
+    }
+  }, [selectedObject]);
+
+  // Toggles bold. The branching lives in applyTextStyle now; what's left here is the only
+  // bold-specific part — deciding which way to flip when the selection is mixed. The rule
+  // is the usual one: unless every selected character is already bold, make them all bold.
+  const toggleBold = useCallback(() => {
+    if (!isTextObject(selectedObject)) return;
+    const weight = summarizeTextStyle(selectedObject, textRange(selectedObject)).fontWeight;
+    const allBold = !weight.mixed && (weight.value === "700" || weight.value === 700 || weight.value === "bold");
+    applyTextStyle({ fontWeight: allBold ? "400" : "700" });
+  }, [selectedObject, applyTextStyle]);
 
   // Inserts an emoji into the selected text: at the cursor (replacing the selected range)
   // if the box is being edited, appended otherwise. The picker exists because the OS
@@ -875,6 +1009,9 @@ export function useCanvasState() {
     setScrim,
     syncEffectsFromCanvas,
     updateSelectedObject,
+    applyTextStyle,
+    clearTextStyle,
+    restoreTextFocus,
     toggleBold,
     insertEmoji,
     deleteSelected,

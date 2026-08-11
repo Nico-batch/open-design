@@ -1,4 +1,4 @@
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useMemo } from "preact/hooks";
 import {
   Bold,
   Italic,
@@ -10,17 +10,47 @@ import {
   FlipVertical,
   Trash2,
   Copy,
+  Eraser,
 } from "lucide-preact";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { FONT_FAMILIES } from "../lib/fonts";
 import { isBackgroundImage } from "../lib/background";
+import { textRange, summarizeTextStyle } from "../lib/text-styles";
 import { EmojiPicker } from "./emoji-picker";
+
+/**
+ * Keeps a control from stealing focus out of the text box being edited. Losing focus
+ * doesn't end Fabric's editing session, but it does stop the caret and wipe the selection
+ * highlight, so buttons that don't need typing keep the focus where it is.
+ */
+const keepFocus = (e: Event) => e.preventDefault();
+
+/**
+ * Hands the keyboard back to the text box when a field that had to take focus is finished
+ * with. Bound to Enter rather than `change`, because `change` also fires on blur — that is,
+ * exactly when the operator has just clicked another control — and stealing focus back then
+ * would fight them.
+ */
+const onEnter = (fn: () => void) => (e: KeyboardEvent) => {
+  if (e.key !== "Enter") return;
+  // preventDefault first, and it is not cosmetic: moving focus to the text box mid-keydown
+  // hands the keystroke's default action to the box, and Enter there *replaces the selected
+  // characters with a newline* — pressing Enter to confirm a colour deleted the very word
+  // being formatted. Cancelling the keystroke lets the focus move without it landing
+  // anywhere.
+  e.preventDefault();
+  fn();
+};
 
 export function RightSidebar() {
   const {
     selectedObject,
+    selectionVersion,
     updateSelectedObject,
+    applyTextStyle,
+    clearTextStyle,
+    restoreTextFocus,
     toggleBold,
     insertEmoji,
     deleteSelected,
@@ -37,12 +67,44 @@ export function RightSidebar() {
   const isBackground = isBackgroundImage(selectedObject);
   const isShape = selectedObject && !isText && !isImage;
 
+  // What the text controls should be showing: the style of the selected characters when
+  // there are any, of the whole box otherwise. Read in one pass and memoised because
+  // getSelectionStyles builds a full style declaration per selected character, and doing
+  // that once per control would repeat the work on every re-render.
+  //
+  // selectionVersion is the dependency that matters: the fabric object is mutated in
+  // place, so its identity never changes and only that counter marks it as stale. It
+  // also covers caret movement, which bumps it through the text:selection:changed
+  // listener in use-canvas.ts.
+  const range = isText ? textRange(selectedObject) : null;
+  const textStyle = useMemo(
+    () => summarizeTextStyle(selectedObject, range),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedObject, selectionVersion, range?.start, range?.end]
+  );
+  const styleOf = (prop: string) => textStyle[prop] ?? { value: undefined, mixed: false };
+  /** The effective value, or `fallback` when the selection spans more than one value. */
+  const styleValue = <T,>(prop: string, fallback: T): T => {
+    const s = styleOf(prop);
+    return s.mixed || s.value === undefined || s.value === null ? fallback : (s.value as T);
+  };
+  /** A toggle only reads as "on" when every selected character has it on. */
+  const styleIsOn = (prop: string, on: (v: unknown) => boolean) => {
+    const s = styleOf(prop);
+    return !s.mixed && on(s.value);
+  };
+
   // Fabric defaults strokeWidth to 1 with stroke:null, so width alone doesn't tell you
   // whether there's an outline — without checking the colour too, the panel would claim
-  // "1px" on text that has none.
-  const hasOutline = !!selectedObject?.stroke && ((selectedObject?.strokeWidth as number) ?? 0) > 0;
-  const outlineWidth = hasOutline ? (selectedObject!.strokeWidth as number) : 0;
-  const outlineColor = ((selectedObject?.stroke as string) || "#000000").toString();
+  // "1px" on text that has none. Read through styleOf so the outline of a single
+  // highlighted word reports itself rather than the box's.
+  const strokePaint = isText ? styleOf("stroke") : { value: selectedObject?.stroke, mixed: false };
+  const strokeSize = isText
+    ? styleValue<number>("strokeWidth", 0)
+    : ((selectedObject?.strokeWidth as number) ?? 0);
+  const hasOutline = !!strokePaint.value && strokeSize > 0;
+  const outlineWidth = hasOutline ? strokeSize : 0;
+  const outlineColor = ((strokePaint.value as string) || "#000000").toString();
 
   /**
    * Applies a text outline the way it actually needs to be done, rather than just setting
@@ -62,20 +124,23 @@ export function RightSidebar() {
    */
   const applyOutline = ({ color, width }: { color?: string; width?: number }) => {
     if (!selectedObject) return;
-    const fontSize = ((selectedObject as any).fontSize as number) || 48;
+    const fontSize = styleValue<number>("fontSize", 48) || 48;
     const nextWidth =
       width ?? (outlineWidth > 0 ? outlineWidth : Math.max(2, Math.round(fontSize * 0.06)));
 
     // Dragging the width to 0 clears the colour too, so "off" is genuinely off rather
     // than a zero-width stroke lingering on the object.
     if (nextWidth === 0) {
-      updateSelectedObject({ stroke: null, strokeWidth: 0 });
+      applyTextStyle({ stroke: null, strokeWidth: 0 });
       return;
     }
 
-    updateSelectedObject({
+    applyTextStyle({
       stroke: color ?? outlineColor,
       strokeWidth: nextWidth,
+      // Only stroke/strokeWidth can be held per character; these three are object-level in
+      // Fabric, and applyTextStyle routes them there. Harmless on the characters that have
+      // no outline, since the stroke pass skips anything without one.
       paintFirst: "stroke",
       strokeLineJoin: "round",
       strokeUniform: true,
@@ -144,11 +209,19 @@ export function RightSidebar() {
               <label class="text-[11px] text-zinc-400 mb-1 block">Font family</label>
               <select
                 class="w-full bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none cursor-pointer focus:border-accent"
-                value={(selectedObject as any).fontFamily || "Inter"}
-                onChange={(e) =>
-                  updateSelectedObject({ fontFamily: (e.target as HTMLSelectElement).value })
-                }
+                value={styleOf("fontFamily").mixed ? "" : styleValue("fontFamily", "Inter")}
+                onChange={(e) => {
+                  applyTextStyle({ fontFamily: (e.target as HTMLSelectElement).value });
+                  restoreTextFocus();
+                }}
               >
+                {/* Only reachable when the selection spans more than one family: showing
+                    one of them would claim the whole selection uses it. */}
+                {styleOf("fontFamily").mixed && (
+                  <option value="" disabled>
+                    varios
+                  </option>
+                )}
                 {FONT_FAMILIES.map((f) => (
                   <option key={f} value={f} style={{ fontFamily: f }}>
                     {f}
@@ -163,12 +236,13 @@ export function RightSidebar() {
               <input
                 type="number"
                 class="w-full bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent"
-                value={(selectedObject as any).fontSize || 18}
-                onInput={(e) =>
-                  updateSelectedObject({
-                    fontSize: parseInt((e.target as HTMLInputElement).value) || 18,
-                  })
-                }
+                value={styleOf("fontSize").mixed ? "" : styleValue("fontSize", 18)}
+                placeholder={styleOf("fontSize").mixed ? "varios" : undefined}
+                onKeyDown={onEnter(restoreTextFocus)}
+                onInput={(e) => {
+                  const next = parseInt((e.target as HTMLInputElement).value);
+                  if (!Number.isNaN(next)) applyTextStyle({ fontSize: next });
+                }}
               />
             </div>
 
@@ -178,25 +252,27 @@ export function RightSidebar() {
               <div class="flex gap-1">
                 <button
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
-                    (selectedObject as any).fontWeight === "700" || (selectedObject as any).fontWeight === "bold"
+                    styleIsOn("fontWeight", (v) => v === "700" || v === 700 || v === "bold")
                       ? "bg-accent/20 border-accent text-accent"
                       : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
                   title="Bold — applies to the selected characters while editing text, or the whole box otherwise"
-                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseDown={keepFocus}
                   onClick={toggleBold}
                 >
                   <Bold size={14} />
                 </button>
                 <button
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
-                    (selectedObject as any).fontStyle === "italic"
+                    styleIsOn("fontStyle", (v) => v === "italic")
                       ? "bg-accent/20 border-accent text-accent"
                       : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
+                  title="Italic — applies to the selected characters while editing text, or the whole box otherwise"
+                  onMouseDown={keepFocus}
                   onClick={() =>
-                    updateSelectedObject({
-                      fontStyle: (selectedObject as any).fontStyle === "italic" ? "normal" : "italic",
+                    applyTextStyle({
+                      fontStyle: styleIsOn("fontStyle", (v) => v === "italic") ? "normal" : "italic",
                     })
                   }
                 >
@@ -204,12 +280,14 @@ export function RightSidebar() {
                 </button>
                 <button
                   class={`p-1.5 rounded-md border cursor-pointer transition-all ${
-                    (selectedObject as any).underline
+                    styleIsOn("underline", (v) => v === true)
                       ? "bg-accent/20 border-accent text-accent"
                       : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
                   }`}
+                  title="Underline — applies to the selected characters while editing text, or the whole box otherwise"
+                  onMouseDown={keepFocus}
                   onClick={() =>
-                    updateSelectedObject({ underline: !(selectedObject as any).underline })
+                    applyTextStyle({ underline: !styleIsOn("underline", (v) => v === true) })
                   }
                 >
                   <Underline size={14} />
@@ -247,25 +325,25 @@ export function RightSidebar() {
               </div>
             </div>
 
-            {/* Text color */}
+            {/* Text color — the one control most likely to be aimed at a single word, so
+                it reads and writes the selected characters when there are any. */}
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Color</label>
               <div class="flex items-center gap-2">
                 <input
                   type="color"
                   class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                  value={((selectedObject as any).fill as string) || "#ffffff"}
-                  onInput={(e) =>
-                    updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
-                  }
+                  value={styleValue("fill", "#ffffff")}
+                  onMouseDown={keepFocus}
+                  onInput={(e) => applyTextStyle({ fill: (e.target as HTMLInputElement).value })}
                 />
                 <input
                   type="text"
                   class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
-                  value={((selectedObject as any).fill as string) || "#ffffff"}
-                  onInput={(e) =>
-                    updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
-                  }
+                  value={styleOf("fill").mixed ? "" : styleValue("fill", "#ffffff")}
+                  placeholder={styleOf("fill").mixed ? "varios" : undefined}
+                  onKeyDown={onEnter(restoreTextFocus)}
+                  onInput={(e) => applyTextStyle({ fill: (e.target as HTMLInputElement).value })}
                 />
               </div>
             </div>
@@ -285,12 +363,14 @@ export function RightSidebar() {
                   type="color"
                   class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
                   value={outlineColor}
+                  onMouseDown={keepFocus}
                   onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
                 />
                 <input
                   type="text"
                   class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
                   value={outlineColor}
+                  onKeyDown={onEnter(restoreTextFocus)}
                   onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
                 />
               </div>
@@ -301,8 +381,28 @@ export function RightSidebar() {
                 step="0.5"
                 class="w-full accent-accent"
                 value={outlineWidth}
+                onMouseDown={keepFocus}
                 onInput={(e) => applyOutline({ width: parseFloat((e.target as HTMLInputElement).value) })}
               />
+            </div>
+
+            {/* Clearing per-character overrides. Setting a colour with nothing highlighted
+                leaves hand-coloured words alone on purpose (Fabric paints the character
+                value over the object's), so this is the way back to a uniform box. */}
+            <div>
+              <button
+                class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md border border-zinc-700 bg-transparent text-[11px] text-zinc-400 cursor-pointer transition-all hover:text-zinc-50 hover:border-zinc-500"
+                title={
+                  range
+                    ? "Devuelve los caracteres seleccionados al estilo del cuadro"
+                    : "Quita los ajustes por palabra de todo el cuadro"
+                }
+                onMouseDown={keepFocus}
+                onClick={clearTextStyle}
+              >
+                <Eraser size={13} />
+                {range ? "Quitar formato de la selección" : "Quitar formato por palabra"}
+              </button>
             </div>
 
             {/* Line height */}
