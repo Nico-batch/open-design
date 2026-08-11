@@ -17,6 +17,14 @@ import { useEditor } from "../context";
 import { FONT_FAMILIES } from "../lib/fonts";
 import { isBackgroundImage } from "../lib/background";
 import { textRange, summarizeTextStyle } from "../lib/text-styles";
+import {
+  readTextShadow,
+  buildTextShadow,
+  defaultsFor,
+  isHollowFill,
+  hollowProps,
+  type TextGlowKind,
+} from "../lib/text-effects";
 import { EmojiPicker } from "./emoji-picker";
 
 /**
@@ -145,6 +153,44 @@ export function RightSidebar() {
       strokeLineJoin: "round",
       strokeUniform: true,
     });
+  };
+
+  // ── Text effects (lib/text-effects.ts) ───────────────────────────────────────────
+  // Read off the object on every render, so the panel reflects a design that was just
+  // reloaded or undone rather than its own memory of the last thing clicked.
+  const shadow = readTextShadow(selectedObject);
+  // Read through styleOf, not off the object: fill and stroke are per-character, so with a
+  // word selected these controls are about that word.
+  const hollow = isHollowFill(styleOf("fill").value);
+  const textBg = styleValue<string>("textBackgroundColor", "");
+
+  /** Changes one setting of the shadow/glow, keeping the rest. */
+  const applyShadow = (patch: Partial<typeof shadow>) => {
+    // Switching the effect on from nothing starts from values that actually read, instead
+    // of a zero-blur zero-offset shadow that looks like the button did nothing.
+    const base =
+      shadow.kind === "none" && patch.kind && patch.kind !== "none"
+        ? { ...defaultsFor(patch.kind), ...patch }
+        : { ...shadow, ...patch };
+    applyTextStyle({ shadow: buildTextShadow(base) });
+  };
+
+  const toggleHollow = () => {
+    if (!selectedObject) return;
+    applyTextStyle(
+      hollowProps(
+        {
+          fill: styleOf("fill").value,
+          stroke: strokePaint.value,
+          // outlineWidth, not strokeSize: Fabric leaves strokeWidth at 1 even with no
+          // stroke colour, and taking that at face value gave hollow letters a hairline
+          // edge instead of one derived from the font size.
+          strokeWidth: outlineWidth,
+          fontSize: styleValue<number>("fontSize", 48) || 48,
+        },
+        !hollow
+      )
+    );
   };
 
   if (!selectedObject) {
@@ -384,6 +430,140 @@ export function RightSidebar() {
                 onMouseDown={keepFocus}
                 onInput={(e) => applyOutline({ width: parseFloat((e.target as HTMLInputElement).value) })}
               />
+            </div>
+
+            {/* Effects — the letter side of legibility over a photo. The Bg panel covers
+                the picture side (lib/effects.ts); between them a headline can be made to
+                read without flattening the image. */}
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 block">Efectos</label>
+              <div class="flex gap-1.5 mb-2">
+                {([
+                  { kind: "none", label: "Ninguno", hint: "Sin sombra ni resplandor" },
+                  { kind: "shadow", label: "Sombra", hint: "Sombra desplazada detrás de la letra" },
+                  { kind: "glow", label: "Resplandor", hint: "Halo alrededor de la letra, sin desplazamiento" },
+                ] as { kind: TextGlowKind; label: string; hint: string }[]).map(({ kind, label, hint }) => (
+                  <button
+                    key={kind}
+                    class={`flex-1 py-1 rounded-md border text-[11px] cursor-pointer transition-all ${
+                      shadow.kind === kind
+                        ? "bg-accent/20 border-accent text-accent"
+                        : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50 hover:border-zinc-500"
+                    }`}
+                    title={hint}
+                    onMouseDown={keepFocus}
+                    onClick={() => applyShadow({ kind })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Fabric keeps one shadow per object, so these controls serve whichever of the
+                  two is active — and neither can be narrowed down to a selected word. */}
+              {shadow.kind !== "none" && (
+                <div class="flex flex-col gap-2 pl-2 border-l border-zinc-700">
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="color"
+                      class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
+                      value={shadow.color}
+                      onMouseDown={keepFocus}
+                      onInput={(e) => applyShadow({ color: (e.target as HTMLInputElement).value })}
+                    />
+                    <input
+                      type="text"
+                      class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
+                      value={shadow.color}
+                      onKeyDown={onEnter(restoreTextFocus)}
+                      onInput={(e) => applyShadow({ color: (e.target as HTMLInputElement).value })}
+                    />
+                  </div>
+                  <div>
+                    <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                      Intensidad
+                      <span class="text-zinc-400 font-mono">{Math.round(shadow.strength * 100)}%</span>
+                    </label>
+                    <input
+                      type="range" min="0" max="1" step="0.05" class="w-full accent-accent"
+                      value={shadow.strength}
+                      onMouseDown={keepFocus}
+                      onInput={(e) => applyShadow({ strength: parseFloat((e.target as HTMLInputElement).value) })}
+                    />
+                  </div>
+                  <div>
+                    <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                      Desenfoque
+                      <span class="text-zinc-400 font-mono">{shadow.blur}px</span>
+                    </label>
+                    <input
+                      type="range" min="0" max="60" step="1" class="w-full accent-accent"
+                      value={shadow.blur}
+                      onMouseDown={keepFocus}
+                      onInput={(e) => applyShadow({ blur: parseInt((e.target as HTMLInputElement).value) })}
+                    />
+                  </div>
+                  {/* A glow has to stay centred on the letter, so distance is hidden for it
+                      rather than shown as a slider that does nothing. */}
+                  {shadow.kind === "shadow" && (
+                    <div>
+                      <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                        Distancia
+                        <span class="text-zinc-400 font-mono">{shadow.distance}px</span>
+                      </label>
+                      <input
+                        type="range" min="0" max="40" step="1" class="w-full accent-accent"
+                        value={shadow.distance}
+                        onMouseDown={keepFocus}
+                        onInput={(e) => applyShadow({ distance: parseInt((e.target as HTMLInputElement).value) })}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Hollow letters and a band behind the text. Both are per-character in Fabric,
+                so unlike the shadow these two do follow a selected word. */}
+            <div>
+              <label class="text-[11px] text-zinc-400 mb-1 block">Relleno</label>
+              <button
+                class={`w-full py-1 mb-2 rounded-md border text-[11px] cursor-pointer transition-all ${
+                  hollow
+                    ? "bg-accent/20 border-accent text-accent"
+                    : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50 hover:border-zinc-500"
+                }`}
+                title="Letra hueca: quita el relleno y deja solo el contorno, que toma el color que tenía la letra"
+                onMouseDown={keepFocus}
+                onClick={toggleHollow}
+              >
+                Hueco (solo contorno)
+              </button>
+
+              <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                Fondo del texto
+                <span class="text-zinc-400 font-mono">{textBg ? "on" : "off"}</span>
+              </label>
+              <div class="flex items-center gap-2">
+                <input
+                  type="color"
+                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
+                  value={textBg || "#000000"}
+                  onMouseDown={keepFocus}
+                  onInput={(e) =>
+                    applyTextStyle({ textBackgroundColor: (e.target as HTMLInputElement).value })
+                  }
+                />
+                <button
+                  class="flex-1 py-1.5 rounded-md border border-zinc-700 bg-transparent text-[11px] text-zinc-400 cursor-pointer transition-all hover:text-zinc-50 hover:border-zinc-500 disabled:opacity-40"
+                  title="Quita la banda de color de detrás del texto"
+                  disabled={!textBg}
+                  onMouseDown={keepFocus}
+                  onClick={() => applyTextStyle({ textBackgroundColor: "" })}
+                >
+                  Quitar fondo
+                </button>
+              </div>
             </div>
 
             {/* Clearing per-character overrides. Setting a colour with nothing highlighted

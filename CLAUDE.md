@@ -147,7 +147,8 @@ src/
     │   ├── fonts.ts            — carga y re-medición de webfonts en canvas (§9.13 bug B)
     │   ├── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
     │   ├── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
-    │   └── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
+    │   ├── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
+    │   └── text-effects.ts     — sombra, resplandor, hueco y fondo del texto (§9.24)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -1285,6 +1286,67 @@ consola.
 **Lo que esto NO hace**, por decisión del usuario: no hay imán ni líneas de centro. Los
 tercios caen en 1/3 y 2/3, así que para centrar exacto se sigue yendo a ojo. Añadir los dos
 ejes centrales sería una entrada más en la lista de fracciones de `guides-overlay.tsx`.
+
+### 9.24 Efectos del texto: sombra, resplandor, hueco y fondo
+
+Petición del usuario: «más efectos para las letras, quiero uno que añada como un contorno
+sombreado». Aclarado con vistas previas, resultó ser **sombra proyectada**; añadió además
+**resplandor**, **hueco** y **fondo del texto**. Todo vive en
+[`lib/text-effects.ts`](src/client/lib/text-effects.ts), el equivalente para la letra de lo
+que `lib/effects.ts` hace con la foto (§9.14): entre los dos cubren las dos salidas al mismo
+problema — calmar la imagen, o hacer el texto lo bastante fuerte como para que dé igual.
+
+#### Tres cosas de Fabric que deciden el diseño
+
+1. **Un objeto tiene exactamente una ranura `shadow`.** Un resplandor *es* una sombra sin
+   desplazamiento y con más desenfoque, así que sombra y resplandor **no pueden coexistir**.
+   Por eso son un selector `Ninguno | Sombra | Resplandor` y no dos casillas que se pisarían
+   la una a la otra en silencio.
+2. **`shadow` es de objeto, no por carácter** — no está en `styleProperties` (§9.21). Pasa
+   igualmente por `applyTextStyle`, porque `splitTextStyleProps` desvía al objeto lo que no
+   es por carácter, pero **una selección no puede acotarla**. En cambio
+   `textBackgroundColor`, `fill` y `stroke` sí son por carácter, así que el fondo del texto y
+   el hueco **sí siguen a la palabra seleccionada**.
+3. **La sombra se salta el contorno salvo que se le pida.** `_renderTextStroke` llama a
+   `_removeShadow` cuando `shadow.affectStroke` es `false`, que es lo normal. Sin tocarlo,
+   una letra con contorno proyecta la sombra solo de su relleno y el contorno parece pegado
+   encima. `affectStroke: true` hace que la silueta entera la proyecte como una sola forma —
+   es literalmente lo que convierte esto en el «contorno sombreado» que se pidió.
+
+**El tipo de efecto no se guarda aparte**: se deduce del desplazamiento (sin desplazamiento
+= resplandor). Así todo cabe dentro del `shadow` que Fabric ya serializa, sin nada que
+registrar en `customProperties` ni que perder al pasar por `canvas_json`. La intensidad viaja
+como el alfa del color (`rgba(...)`), leído de vuelta con `fabric.Color`, para que el
+selector de color siga siendo un selector de color.
+
+#### Hueco: un intercambio, no un estado oculto
+
+Activarlo mueve el color de la letra **al contorno**; desactivarlo lo devuelve al relleno y
+limpia el contorno. Al ser una involución exacta, pulsar el botón dos veces devuelve
+exactamente lo que había, y no hay ningún «color anterior» guardado que pueda quedar obsoleto
+al recargar. Pisa un contorno previo a propósito: la alternativa pierde más — una palabra
+roja con contorno negro se quedaría solo en negro, y el color que el ojo sigue desaparecería
+sin vuelta atrás. Crear el contorno al entrar no es opcional: relleno transparente sin trazo
+es una palabra invisible, y se lee como que el botón ha borrado el texto.
+
+#### Un bug encontrado en la verificación
+
+El contorno del hueco salía de **1px** en vez de derivarse del cuerpo de la letra: se le
+estaba pasando `strokeWidth` tal cual, y **Fabric deja ese valor en 1 aunque no haya ningún
+contorno** — exactamente la trampa que el comentario de `applyOutline` ya advertía desde
+§9.15. Con letra de 48px eso es un filo de pelo. Ahora se pasa `outlineWidth`, que es el
+valor ya corregido por «no hay color de trazo ⇒ no hay contorno».
+
+**Verificado contra el build de producción** (`:8788`, CSP real), midiendo píxeles pintados
+además del modelo: encender la sombra pasa de 16.610 a 33.060 píxeles con tinta, o sea que se
+pinta de verdad y no solo se guarda; el `canvas_json` recoge `offsetX/Y`, `affectStroke: true`
+y el color en `rgba`; el deslizador de distancia llega hasta la sombra; cambiar a resplandor
+**sustituye** la sombra en vez de acumularse (una sola ranura, desplazamiento 0); al recargar
+el panel vuelve marcando «Resplandor» y no «Ninguno»; «Ninguno» la borra del diseño guardado;
+el hueco deja `fill: transparent` con contorno de 2px del color que tenía la letra y vuelve
+limpio, incluso con un contorno azul previo; el fondo del texto se guarda **solo en el rango**
+`22..28` y el cuadro no recibe ninguno; y la exportación sigue dando 2160×2160. Las suites
+completas de §9.21 y §9.23 siguen pasando enteras. Sin errores de consola.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
