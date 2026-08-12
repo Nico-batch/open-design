@@ -19,6 +19,7 @@ import {
   STYLE_PROPERTIES,
   BLANK_STYLE,
 } from "../lib/text-styles";
+import { PHOTO_RECIPE, headlineRecipe, uppercaseText, centreOnPage } from "../lib/enhance";
 import { applyWorkspaceGeometry, applyWorkspaceClip, pageExportCrop, scaleAboutPageCenter } from "../lib/workspace";
 import {
   applyBackgroundEffects,
@@ -532,6 +533,59 @@ export function useCanvasState() {
     [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
   );
 
+  // ── "Mejorar": the local-news recipe, applied deterministically ─────
+  // See lib/enhance.ts for why this is filters and type settings rather than a round trip
+  // through an image model.
+
+  /** Photo half: sharpen, contrast, a light darkening and an even veil. */
+  const enhancePhoto = useCallback(() => {
+    const canvas = getActiveCanvas();
+    const pageId = activeCanvasIdRef.current;
+    if (!canvas || !pageId) return false;
+    if (!findBackgroundImage(canvas)) return false;
+
+    const { scrimKind, scrimOpacity, ...effects } = PHOTO_RECIPE;
+    setBackgroundEffectsState(effects);
+    applyBackgroundEffects(canvas, effects);
+    setScrimState({ kind: scrimKind, opacity: scrimOpacity });
+    applyScrim(canvas, canvasWidth, canvasHeight, scrimKind, scrimOpacity);
+    saveHistory(pageId);
+    return true;
+  }, [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]);
+
+  /** Type half: heavy white sans, uppercase, tightened, shadowed and centred on the page. */
+  const enhanceHeadline = useCallback(() => {
+    const canvas = getActiveCanvas();
+    const pageId = activeCanvasIdRef.current;
+    if (!canvas || !pageId || !isTextObject(selectedObject)) return false;
+    const obj = selectedObject;
+
+    const { props, width } = headlineRecipe(canvasWidth);
+    const upper = uppercaseText(obj.text ?? "");
+    // Always the whole box, never the selected word: this is a layout preset, and applying
+    // it to a range would leave the rest of the headline in the old face and size.
+    obj.set({ ...props, width } as Partial<fabric.FabricObject>);
+    if (upper) obj.set({ text: upper } as Partial<fabric.FabricObject>);
+    obj.dirty = true;
+    // Re-measure before centring: the new size and width change how the text wraps, and the
+    // vertical centre depends on the height that comes out of that.
+    obj.initDimensions();
+    centreOnPage(obj, canvasWidth, canvasHeight);
+    canvas.requestRenderAll();
+    saveHistory(pageId);
+    refreshSelection();
+
+    // Montserrat 800 has almost certainly never been fetched, so what was just measured is
+    // the fallback's metrics (lib/fonts.ts). Re-centre once the real face lands.
+    syncCanvasFonts(canvas).then(() => {
+      obj.initDimensions();
+      centreOnPage(obj, canvasWidth, canvasHeight);
+      canvas.requestRenderAll();
+      refreshSelection();
+    });
+    return true;
+  }, [getActiveCanvas, selectedObject, canvasWidth, canvasHeight, saveHistory, refreshSelection]);
+
   // ── Object manipulation ─────────────────────────────────────────────
 
   const updateSelectedObject = useCallback(
@@ -1012,6 +1066,8 @@ export function useCanvasState() {
     scrim,
     setScrim,
     syncEffectsFromCanvas,
+    enhancePhoto,
+    enhanceHeadline,
     updateSelectedObject,
     applyTextStyle,
     clearTextStyle,

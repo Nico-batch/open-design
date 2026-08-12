@@ -58,6 +58,9 @@ export interface EditorContextValue {
   scrim: { kind: ScrimKind; opacity: number };
   setScrim: (kind: ScrimKind, opacity: number) => void;
   syncEffectsFromCanvas: (canvas: fabric.Canvas) => void;
+  /** The "local news post" recipe — see lib/enhance.ts. Both return false if nothing to do. */
+  enhancePhoto: () => boolean;
+  enhanceHeadline: () => boolean;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   /** Text formatting that respects a character selection — see lib/text-styles.ts. */
   applyTextStyle: (props: Record<string, unknown>) => void;

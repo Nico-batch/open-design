@@ -10,6 +10,7 @@ import {
   Palette,
   LayoutGrid,
   Sparkles,
+  WandSparkles,
 } from "lucide-preact";
 import { useEditor } from "../context";
 import { TemplateCard } from "./template-card";
@@ -53,7 +54,8 @@ const BG_COLORS = [
 
 export function LeftSidebar() {
   const { addText, addShape, addImage, setBackground, setBackgroundImageFit,
-    backgroundEffects, setBackgroundEffects, scrim, setScrim, templates, loadTemplate } =
+    backgroundEffects, setBackgroundEffects, scrim, setScrim, templates, loadTemplate,
+    enhancePhoto } =
     useEditor();
   const [activeSection, setActiveSection] = useState<Section | null>("templates");
   const [uploading, setUploading] = useState(false);
@@ -322,10 +324,62 @@ export function LeftSidebar() {
                         each blur step re-filters the full-size bitmap, which is far too
                         heavy to run on every pixel of drag. */}
                     <div class="mt-5 pt-4 border-t border-zinc-800">
+                      {/* The whole photo half of the "local news post" recipe in one press
+                          (lib/enhance.ts). Every value it sets is a slider below, so this is
+                          a starting point rather than a black box, and Ctrl+Z undoes it. */}
+                      <button
+                        class="w-full flex items-center justify-center gap-1.5 py-2 mb-4 rounded-md border border-accent/60 bg-accent/10 text-[11px] font-semibold text-accent cursor-pointer transition-all hover:bg-accent/20"
+                        title="Aplica el acabado de noticia: nitidez, contraste, oscurecido suave y velo. No regenera la foto ni cambia el encuadre."
+                        onClick={() => {
+                          if (!enhancePhoto()) alert("Primero pon una foto de fondo.");
+                        }}
+                      >
+                        <WandSparkles size={13} />
+                        Mejorar foto
+                      </button>
+
                       <p class="text-zinc-400 text-[11px] font-semibold mb-1">Text legibility</p>
                       <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
                         Soften or darken the photo so text on top stays readable.
                       </p>
+
+                      <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                        Sharpen
+                        <span class="font-mono">{Math.round(backgroundEffects.sharpen * 100)}%</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="w-full accent-accent mb-3"
+                        value={backgroundEffects.sharpen}
+                        onChange={(e) =>
+                          setBackgroundEffects({
+                            ...backgroundEffects,
+                            sharpen: parseFloat((e.target as HTMLInputElement).value),
+                          })
+                        }
+                      />
+
+                      <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                        Contrast
+                        <span class="font-mono">{Math.round(backgroundEffects.contrast * 100)}%</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.5"
+                        step="0.01"
+                        class="w-full accent-accent mb-3"
+                        value={backgroundEffects.contrast}
+                        onChange={(e) =>
+                          setBackgroundEffects({
+                            ...backgroundEffects,
+                            contrast: parseFloat((e.target as HTMLInputElement).value),
+                          })
+                        }
+                      />
 
                       <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
                         Blur

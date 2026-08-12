@@ -149,6 +149,7 @@ src/
     │   ├── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
     │   ├── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
     │   └── text-effects.ts     — sombra, resplandor, hueco y fondo del texto (§9.24)
+    │   └── enhance.ts          — receta "Mejorar": acabado de noticia local (§9.25)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -1347,6 +1348,78 @@ el hueco deja `fill: transparent` con contorno de 2px del color que tenía la le
 limpio, incluso con un contorno azul previo; el fondo del texto se guarda **solo en el rango**
 `22..28` y el cuadro no recibe ninguno; y la exportación sigue dando 2160×2160. Las suites
 completas de §9.21 y §9.23 siguen pasando enteras. Sin errores de consola.
+
+### 9.25 «Mejorar»: la receta de noticia local, sin IA
+
+El usuario venía pasando cada imagen por un modelo de imagen con un prompt largo, y pidió
+poder aplicar «esos efectos» desde el editor con un botón **Mejorar**, más poder configurar
+cada uno por separado.
+
+**Al escribir el prompt como valores concretos, resulta que casi nada de él necesita un
+modelo.** Buena parte de su extensión son prohibiciones —«NO CAMBIES, NO REGENERES, NO
+RECORTES, NO INVENTES, NO CAMBIES LAS DIMENSIONES»— y todas se cumplen aquí **por
+construcción**, porque la fotografía no se repinta nunca: es un objeto del lienzo con
+filtros encima. Lo que queda es un puñado de filtros y de ajustes tipográficos.
+
+El argumento decisivo, sin embargo, es otro: **por el modelo, el titular vuelve como
+píxeles**. Una errata obliga a regenerar la imagen entera. Aplicado al lienzo sigue siendo
+texto real — editable, seleccionable palabra a palabra (§9.21), y guardado en `canvas_json`.
+
+Correspondencia entre el prompt y lo que ya existía:
+
+| Prompt | Dónde |
+|---|---|
+| Mantener foto, encuadre, dimensiones; no recortar ni inventar | Imposible violarlo: no se regenera |
+| Velo oscuro semitransparente | Scrim, §9.14 |
+| Titular Montserrat ExtraBold blanco | El peso 800 ya venía en `public/fonts` |
+| Centrado, interlineado compacto, tracking reducido | Controles existentes |
+| Sombra negra difusa, sin contorno grueso | §9.24 |
+| Palabra destacada en otro color | §9.21 |
+| Logo en su sitio | §4 |
+| **Nitidez** y **contraste** | Nuevos: `Convolute` y `Contrast` |
+| **MAYÚSCULAS** y **centrar el bloque** | Nuevos, en `lib/enhance.ts` |
+
+**Dos botones, no uno** (decisión del usuario): «Mejorar foto» en el panel Bg y «Mejorar
+titular» en el panel de texto. Reencuadrar un titular ya colocado a mano es lo más intrusivo
+de la receta, así que se decide aparte.
+
+#### Detalles que importan
+
+- **El orden de los filtros no es arbitrario.** La nitidez va primero, sobre la foto aún
+  intacta: un desenfoque posterior la desharía, y afilar *después* de subir el contraste
+  exagera los halos que el propio contraste crea.
+- **El kernel de nitidez suma 1.** `sharpenMatrix` interpola el laplaciano de 5 puntos con
+  la identidad, así que a 0 deja la foto igual y los pesos siempre suman uno — un kernel que
+  no suma 1 aclara u oscurece la imagen entera en silencio, que es la forma habitual de que
+  esto salga mal.
+- **Las mayúsculas solo se aplican si la longitud no cambia.** `styles` va indexado por
+  posición de carácter, así que una conversión que alargue el texto (ß→SS) descuadraría el
+  formato por palabra. En español no ocurre (á→Á), pero la guarda está escrita.
+- **Se re-centra dos veces.** Montserrat 800 casi nunca está descargada al pulsar el botón,
+  así que la primera medida es la de la fuente de reserva (§9.13 bug B); `syncCanvasFonts`
+  resuelve y se vuelve a centrar con las métricas reales.
+- **La receta se aplica al cuadro entero**, nunca al rango seleccionado: es un preset de
+  maquetación, y acotarlo a una palabra dejaría el resto del titular en la fuente y el
+  tamaño viejos.
+- Todos los valores siguen siendo deslizadores normales (nitidez y contraste son nuevos en
+  el panel Bg), así que la receta es un punto de partida y no una caja negra. Ctrl+Z la
+  deshace.
+
+**Verificado contra el build de producción** (`:8788`, CSP real) con una foto sintética
+detallada, midiendo la imagen además del modelo: tras «Mejorar foto» la luminancia media baja
+de 119,6 a 64,7 (oscurece de verdad) pero se queda muy por encima de negro (la foto sigue
+viéndose, que es lo que el prompt pide dos veces), y la energía de bordes sube de 1,128 a
+1,317 (la nitidez y el contraste hacen algo medible); el `canvas_json` guarda
+`Convolute + Contrast + Brightness` y un scrim, y el `src` de la imagen **sigue siendo la URL
+original**, no un `data:` — o sea que la foto no se sustituyó. Tras «Mejorar titular»: texto
+en mayúsculas con acentos intactos, Montserrat 800, `#ffffff`, centrado, `lineHeight 1.05`,
+`charSpacing -20`, sin contorno, sombra de 13px de desenfoque, centro horizontal exacto en
+540,0 y ancho 886 sobre 1080 (márgenes laterales). La exportación sigue dando 2160×2160 y las
+suites de §9.21, §9.23 y §9.24 siguen pasando enteras. Sin errores de consola.
+
+**Lo que esto NO hace:** no llama a ninguna IA. Si algún día se quiere el acabado concreto de
+un modelo de imagen (por ejemplo un reencuadre generativo), eso sería un endpoint nuevo con
+su clave de API, y habría que asumir que el texto deja de ser editable.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

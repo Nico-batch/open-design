@@ -11,6 +11,7 @@ import {
   Trash2,
   Copy,
   Eraser,
+  WandSparkles,
 } from "lucide-preact";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
@@ -59,6 +60,7 @@ export function RightSidebar() {
     applyTextStyle,
     clearTextStyle,
     restoreTextFocus,
+    enhanceHeadline,
     toggleBold,
     insertEmoji,
     deleteSelected,
@@ -250,6 +252,20 @@ export function RightSidebar() {
         {/* ── Text properties ───────────────────────────────────────── */}
         {isText && (
           <>
+            {/* The typographic half of the "local news post" recipe (lib/enhance.ts): heavy
+                white Montserrat, uppercase, tightened, shadowed and centred on the page.
+                Always the whole box — it is a layout preset, so applying it to a selected
+                word would leave the rest of the headline behind. */}
+            <button
+              class="w-full flex items-center justify-center gap-1.5 py-2 rounded-md border border-accent/60 bg-accent/10 text-[11px] font-semibold text-accent cursor-pointer transition-all hover:bg-accent/20"
+              title="Convierte este texto en titular de noticia: MAYÚSCULAS, Montserrat ExtraBold blanco, centrado en la página y con sombra suave"
+              onMouseDown={keepFocus}
+              onClick={() => enhanceHeadline()}
+            >
+              <WandSparkles size={13} />
+              Mejorar titular
+            </button>
+
             {/* Font family */}
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Font family</label>

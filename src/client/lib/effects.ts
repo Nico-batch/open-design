@@ -23,9 +23,38 @@ export interface BackgroundEffects {
   blur: number;
   /** Fabric's Brightness filter, -1–0 here: we only ever darken, to help contrast. */
   brightness: number;
+  /** Fabric's Contrast filter, -1–1. Positive is the useful direction for a photo. */
+  contrast: number;
+  /** Unsharp amount, 0–1, applied through a convolution kernel — see sharpenMatrix. */
+  sharpen: number;
 }
 
-export const NO_EFFECTS: BackgroundEffects = { blur: 0, brightness: 0 };
+export const NO_EFFECTS: BackgroundEffects = { blur: 0, brightness: 0, contrast: 0, sharpen: 0 };
+
+/**
+ * A sharpening kernel scaled by `amount`, so the slider goes from "untouched" to "clearly
+ * crisper" instead of being a switch.
+ *
+ * It is the textbook 5-point Laplacian sharpen interpolated with the identity: at 0 the
+ * centre is 1 and the neighbours are 0, which leaves every pixel exactly as it was; as the
+ * amount rises the neighbours subtract more and the centre compensates. The weights always
+ * sum to 1, which is what keeps overall brightness unchanged — a kernel that doesn't sum to
+ * 1 silently lightens or darkens the whole photo, and that is the usual way this goes wrong.
+ */
+export function sharpenMatrix(amount: number): number[] {
+  const a = amount;
+  return [
+    0, -a, 0,
+    -a, 1 + 4 * a, -a,
+    0, -a, 0,
+  ];
+}
+
+/** Recovers the amount from a kernel produced by sharpenMatrix. */
+function sharpenAmount(matrix: number[] | undefined): number {
+  const neighbour = matrix?.[1];
+  return typeof neighbour === "number" ? Math.max(0, -neighbour) : 0;
+}
 
 export function isScrim(obj: fabric.FabricObject | undefined | null): boolean {
   return !!obj && (obj as any)._isScrim === true;
@@ -45,9 +74,17 @@ export function readBackgroundEffects(canvas: fabric.Canvas): BackgroundEffects 
   const brightnessFilter = bg.filters.find((f) => f instanceof fabric.filters.Brightness) as
     | fabric.filters.Brightness
     | undefined;
+  const contrastFilter = bg.filters.find((f) => f instanceof fabric.filters.Contrast) as
+    | fabric.filters.Contrast
+    | undefined;
+  const sharpenFilter = bg.filters.find((f) => f instanceof fabric.filters.Convolute) as
+    | fabric.filters.Convolute
+    | undefined;
   return {
     blur: blurFilter?.blur ?? 0,
     brightness: brightnessFilter?.brightness ?? 0,
+    contrast: contrastFilter?.contrast ?? 0,
+    sharpen: sharpenAmount(sharpenFilter?.matrix as number[] | undefined),
   };
 }
 
@@ -65,7 +102,16 @@ export function applyBackgroundEffects(canvas: fabric.Canvas, effects: Backgroun
   if (!bg) return false;
 
   const filters: NonNullable<fabric.FabricImage["filters"]> = [];
+  // Order matters and is not arbitrary: sharpening amplifies whatever detail is there, so
+  // it goes first, while the photo is still untouched. Blur after it would undo it, and
+  // sharpening after a contrast boost would exaggerate the halos contrast already creates.
+  if (effects.sharpen > 0) {
+    filters.push(new fabric.filters.Convolute({ matrix: sharpenMatrix(effects.sharpen) }));
+  }
   if (effects.blur > 0) filters.push(new fabric.filters.Blur({ blur: effects.blur }));
+  if (effects.contrast !== 0) {
+    filters.push(new fabric.filters.Contrast({ contrast: effects.contrast }));
+  }
   if (effects.brightness < 0) {
     filters.push(new fabric.filters.Brightness({ brightness: effects.brightness }));
   }
