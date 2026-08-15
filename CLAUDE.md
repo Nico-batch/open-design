@@ -148,8 +148,9 @@ src/
     │   ├── workspace.ts        — margen de trabajo + recorte de exportación (§9.13 bug C)
     │   ├── effects.ts          — legibilidad del texto sobre foto: blur/oscurecido/velo (§9.14)
     │   ├── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
-    │   └── text-effects.ts     — sombra, resplandor, hueco y fondo del texto (§9.24)
-    │   └── enhance.ts          — receta "Mejorar": acabado de noticia local (§9.25)
+    │   ├── text-effects.ts     — sombra, resplandor, hueco y fondo del texto (§9.24)
+    │   ├── enhance.ts          — receta "Mejorar": acabado de noticia local (§9.25)
+    │   └── snapping.ts         — imán de arrastre a las guías de centro, escape con Ctrl (§9.23)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -159,7 +160,7 @@ src/
     │   └── use-router.ts       — router mínimo, parsea `/design/:id`
     └── components/
         ├── editor.tsx, canvas-area.tsx, page-canvas.tsx, pages-bar.tsx
-        ├── guides-overlay.tsx      — cuadrícula de tercios, capa DOM fuera de Fabric (§9.23)
+        ├── guides-overlay.tsx      — guías de centro imantadas, capa DOM fuera de Fabric (§9.23)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
 
@@ -1244,49 +1245,103 @@ una palabra baja, el desplazamiento se queda en **0** y la barra en `top: 0` (an
 −420). El textarea vive ya en `DIV#fabric-textarea-host`. Las dos suites completas de §9.21
 siguen pasando enteras, así que el textarea sigue recibiendo el teclado con normalidad.
 
-### 9.23 Cuadrícula de tercios
+### 9.23 Guías de centro imantadas
 
-Petición del usuario: «quiero poder añadir una cuadrícula para poder centrar las cosas».
-Eligió **solo guía visual** (sin imán al arrastrar) y **solo las líneas de los tercios**.
-Botón con icono de retícula en el toolbar, junto al zoom; apagada por defecto.
+Empezó como una cuadrícula de tercios, solo visual, sin imán — así se decidió en su momento,
+con la salvedad expresa de que «para centrar exacto se sigue yendo a ojo». El usuario pidió
+lo contrario: una guía que divida el lienzo en 4 (un eje vertical y uno horizontal por el
+centro, no tercios) y que además **imante** el arrastre — con **Ctrl** pulsado como escape
+para colocar a mano cerca del centro sin que el imán interfiera. Mismo botón del toolbar
+(ahora con icono de mira, `Crosshair`), junto al zoom; apagado por defecto, y el imán está
+activo **solo mientras la guía está encendida** — es una sola decisión con dos efectos, no
+dos ajustes independientes.
 
-**Es una capa del DOM, no objetos de Fabric**, y esa es la decisión que importa
-([`guides-overlay.tsx`](src/client/components/guides-overlay.tsx)). Meterla en el lienzo
-habría obligado a excluirla a mano de cuatro sitios a la vez: del `canvas_json` (no es parte
-del diseño), del historial (cada encendido sería un paso de deshacer), de la selección (una
-guía no es algo que se pulse) y sobre todo **de la exportación** — `exportPNG` y
-`exportUploadBlob` leen el lienzo **en vivo**, que es justamente por lo que el logo sí sale
-en la imagen final (§4). Una guía colada dentro del JPEG que se sube a Twenty habría sido un
-mal día. Como hermana del `<canvas>` en el DOM, nada de eso puede pasar por construcción.
+**Sigue siendo una capa del DOM, no objetos de Fabric** — la decisión de fondo de la versión
+anterior no cambia con el imán, y merece repetirse: meter la guía en el lienzo obligaría a
+excluirla a mano de cuatro sitios a la vez: del `canvas_json` (no es parte del diseño), del
+historial (cada encendido sería un paso de deshacer), de la selección (una guía no es algo
+que se pulse) y sobre todo **de la exportación** — `exportPNG`/`exportUploadBlob` leen el
+lienzo **en vivo**, que es justamente por lo que el logo sí sale en la imagen final (§4). Una
+guía colada dentro del JPEG que se sube a Twenty habría sido un mal día. Como hermana del
+`<canvas>` en el DOM ([`guides-overlay.tsx`](src/client/components/guides-overlay.tsx)),
+nada de eso puede pasar por construcción — **el imán en sí vive aparte, en
+[`lib/snapping.ts`](src/client/lib/snapping.ts)**, enganchado al evento `object:moving` de
+Fabric: mueve el objeto real en el lienzo, pero nunca toca el DOM de la guía ni al revés; lo
+único que cruza de un lado a otro es qué eje quedó enganchado, para que la línea correspondiente
+se resalte.
 
-Dos detalles que no son evidentes:
+**Por qué el imán no vive en la propia guía visual.** `GuidesOverlay` es
+`pointer-events: none` a propósito (§9.23 original) — nunca puede ser ella quien intercepte
+el arrastre. El imán tenía que enganchar el propio Fabric, así que es un `canvas.on(
+"object:moving", ...)` más, registrado una vez por página dentro de `registerCanvas`
+(`use-canvas.ts`, el mismo sitio que todos los demás `canvas.on(...)` del editor) — no un
+listener nuevo por objeto.
+
+**Cómo decide qué enganchar:**
+
+- **Solo el centro del objeto, por eje por separado** (decisión del usuario): se compara
+  `target.getCenterPoint()` contra `(pageWidth/2, pageHeight/2)` en cada eje de forma
+  independiente, así que se puede centrar en horizontal y seguir moviendo libre en vertical.
+  Los bordes no enganchan — solo el centro.
+  Se usa `getCenterPoint()`/`setPositionByOrigin(..., "center", "center")`, nunca aritmética
+  sobre `left/top`: es lo único que funciona igual para un objeto suelto, uno rotado y una
+  `ActiveSelection` (arrastre de varios objetos a la vez) sin tener que tratar cada origen
+  como caso aparte.
+- **Tolerancia en píxeles de pantalla, no de diseño** (`8px / zoom`): al zoom por defecto
+  (`0.58`) son ~14 unidades de diseño, pero el radio de enganche se *siente* igual a
+  cualquier zoom — mismo criterio que ya usa el grosor de la línea (`1 / zoom`).
+- **Ctrl (o Cmd) desactiva el imán mientras se mantiene pulsado**, leído directamente del
+  evento nativo de cada tick de `object:moving` (`opt.e.ctrlKey`/`metaKey`), no de un
+  `keydown`/`keyup` global: no hay ningún listener que registrar ni limpiar, y no se queda
+  "pegado" en encendido si la ventana pierde el foco con la tecla aún pulsada. Cmd se trata
+  igual que Ctrl por paridad con el zoom con rueda de `canvas-area.tsx`, que ya hace lo mismo.
+  **Límite conocido y documentado en el propio código:** como el evento solo se dispara al
+  mover el ratón, pulsar Ctrl *después* de haberse quedado quieto sobre el centro no libera
+  el objeto hasta el siguiente movimiento — el comportamiento esperable, no un listener global
+  de más.
+- **El historial no necesita nada nuevo**: `object:modified` ya dispara `saveHistory`
+  ([use-canvas.ts](src/client/hooks/use-canvas.ts)) y salta *después* de soltar, así que la
+  posición ya imantada entra sola en el `Ctrl+Z`.
+
+**Resaltado de la línea enganchada** (pedido por el usuario): mientras un eje está
+enganchado, esa línea pasa al color de acento (`#6366f1`, el mismo del anillo de página
+activa y de los tiradores de Fabric) y grosor `2 / zoom`; al soltar (`mouse:up`) vuelve a su
+estilo normal. El estado vive en `use-canvas.ts` como `{ pageId, x, y }` — **con la página
+incluida**, porque el overlay se pinta en todas las páginas a la vez (una por lienzo) y solo
+debe resaltarse la que se está arrastrando de verdad; el *setter* descarta la actualización
+si nada cambió (`prev` se devuelve tal cual), porque el handler corre en cada tick del ratón
+y sin eso sería un render de más por cada píxel de arrastre.
+
+Dos detalles heredados de la versión de tercios, sin cambios:
 
 - **El grosor se divide por el zoom.** Todo el árbol del lienzo va escalado por CSS
   (`canvas-area.tsx`), así que una línea de 1px se pintaría a 0.58px con el zoom por defecto
-  y casi desaparece. `1 / zoom` la mantiene en un píxel real a cualquier zoom — el mismo
-  truco de escala inversa que ya usan las cabeceras de página.
+  y casi desaparece. `1 / zoom` la mantiene en un píxel real a cualquier zoom.
 - **Núcleo claro con halo oscuro** (`rgba(255,255,255,.7)` + `box-shadow` negro). Un color
   único no vale: debajo puede haber la tarjeta blanca, una foto clara o una oscura.
-  Verificado en los tres casos, no supuesto.
 
 Se dibuja sobre **la página**, no sobre el área de trabajo: el margen existe para alcanzar
-los tiradores que se salen (§9.13), y los tercios solo significan algo dentro de lo que se
+los tiradores que se salen (§9.13), y el centro solo significa algo dentro de lo que se
 exporta.
 
-`showGuides` vive junto al zoom en `use-canvas.ts`, como lo que es: un ajuste del visor. No
-se guarda en ningún sitio, así que al recargar vuelve a estar apagada.
+`showGuides` sigue viviendo junto al zoom en `use-canvas.ts`, como lo que es: un ajuste del
+visor. No se guarda en ningún sitio, así que al recargar vuelve a estar apagada (y el imán
+con ella).
 
-**Verificado contra el build de producción** (`:8788`, CSP real): aparecen cuatro líneas
-exactamente en 1/3 y 2/3 de cada eje, el overlay coincide píxel a píxel con la tarjeta de la
-página, no intercepta el ratón (`pointer-events: none`) y el texto que hay debajo se sigue
-pudiendo seleccionar; tras guardar, el `canvas_json` no contiene ningún objeto añadido; y la
-comprobación que de verdad importa — **el PNG exportado es idéntico byte a byte con la
-cuadrícula encendida y apagada** (mismo SHA-256), sigue midiendo 2160×2160. Sin errores de
-consola.
-
-**Lo que esto NO hace**, por decisión del usuario: no hay imán ni líneas de centro. Los
-tercios caen en 1/3 y 2/3, así que para centrar exacto se sigue yendo a ojo. Añadir los dos
-ejes centrales sería una entrada más en la lista de fracciones de `guides-overlay.tsx`.
+**Verificado contra el build de producción** (`:8788`, CSP real — regla de §9.11/§10.3),
+con ratón real (Playwright) y comprobando la posición exacta persistida en `canvas_json`
+via API, no solo lo que se ve en pantalla: arrastrar una forma a pocos píxeles del centro
+suelta con `getCenterPoint()` en exactamente `(540, 540)` sobre una página 1080×1080, y la
+línea correspondiente se resalta durante el arrastre y vuelve a su color al soltar; repetir
+el mismo arrastre **con Ctrl mantenido durante todo el movimiento** deja el objeto en la
+posición natural del cursor (`546.9, 545.17` en la prueba, sin redondear a 540) y sin ningún
+resaltado — el imán queda desactivado de verdad, no solo visualmente; apagar el botón de
+guías y repetir el arrastre da el mismo resultado sin imán; con dos objetos seleccionados a
+la vez el centro del grupo engancha igual, sin descolocar los objetos que contiene; tras un
+arrastre imantado, `Ctrl+Z` devuelve el objeto a su posición previa; y la comprobación que de
+verdad importa — **el PNG exportado es idéntico byte a byte (mismo SHA-256) con la guía
+encendida y apagada** — confirma que nada de esto puede acabar dentro de la imagen que sube a
+Twenty. Sin errores de consola en ningún paso.
 
 ### 9.24 Efectos del texto: sombra, resplandor, hueco y fondo
 

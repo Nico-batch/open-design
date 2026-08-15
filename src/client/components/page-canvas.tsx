@@ -246,7 +246,7 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       <div class="absolute inset-0">
         <canvas ref={canvasElRef} />
       </div>
-      {showGuides && <GuidesOverlay width={width} height={height} />}
+      {showGuides && <GuidesOverlay width={width} height={height} pageId={page.id} />}
     </div>
   );
 }

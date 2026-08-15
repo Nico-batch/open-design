@@ -5,7 +5,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
-  Grid3x3,
+  Crosshair,
   Download,
   Save,
   Send,
@@ -202,9 +202,9 @@ export function Toolbar() {
               : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-50"
           }`}
           onClick={toggleGuides}
-          title="Cuadrícula de tercios — solo como guía, no sale en la imagen exportada"
+          title="Guías de centro — imantadas al arrastrar, mantén Ctrl para desactivar el imán. No salen en la imagen exportada"
         >
-          <Grid3x3 size={15} />
+          <Crosshair size={15} />
         </button>
 
         <div class="w-px h-5 bg-zinc-600 mx-1" />

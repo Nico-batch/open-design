@@ -31,9 +31,11 @@ export interface EditorContextValue {
   setZoomRaw: (z: number) => void;
   fitScale: number;
   setFitScale: (s: number) => void;
-  /** Rule-of-thirds guides over the page — a view setting, not part of the design. */
+  /** Center guides over the page, with drag-to-center snapping — a view setting, not part of the design. */
   showGuides: boolean;
   toggleGuides: () => void;
+  /** Which page (if any) currently has an axis snapped mid-drag — drives the highlight in guides-overlay.tsx. */
+  snapAxes: { pageId: string | null; x: boolean; y: boolean };
 
   // Canvas actions
   addText: (preset: "heading" | "subheading" | "body", customText?: string) => void;

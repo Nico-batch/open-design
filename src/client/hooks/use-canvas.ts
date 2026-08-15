@@ -31,6 +31,7 @@ import {
   type BackgroundEffects,
   type ScrimKind,
 } from "../lib/effects";
+import { installCenterSnapping, type SnapAxes, type SnapConfig } from "../lib/snapping";
 
 const MAX_HISTORY = 50;
 
@@ -79,11 +80,38 @@ export function useCanvasState() {
   const [canvasHeight, setCanvasHeight] = useState(1080);
   const [zoom, setZoom] = useState(0.58);
   const [fitScale, setFitScale] = useState(0.58);
-  // Purely a view setting, like the zoom: never saved with the design, never exported.
+  // Never saved with the design, never exported — a view setting, like the zoom. Also
+  // gates the center-snap while dragging (lib/snapping.ts): the two are one feature, on
+  // together, off together.
   const [showGuides, setShowGuides] = useState(false);
+  // Live-mirrors showGuides/canvasWidth/canvasHeight/zoom for the snap handler registered
+  // once per canvas in registerCanvas (a stable useCallback) — without this it would keep
+  // reading whatever these were at registration time.
+  const snapConfigRef = useRef<SnapConfig>({ enabled: false, pageWidth: 1080, pageHeight: 1080, zoom: 0.58 });
+  // Which page is mid-drag and which axis(es) are currently snapped, so guides-overlay.tsx
+  // can highlight only the line on the page actually being dragged.
+  const [snapAxes, setSnapAxes] = useState<{ pageId: string | null } & SnapAxes>({
+    pageId: null,
+    x: false,
+    y: false,
+  });
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const isRestoringRef = useRef<Set<string>>(new Set());
+
+  // Reassigned every render (not in an effect) — cheap, and guarantees the snap handler
+  // never reads a stale value, the same pattern page-canvas.tsx uses for onActivateRef.
+  snapConfigRef.current = { enabled: showGuides, pageWidth: canvasWidth, pageHeight: canvasHeight, zoom };
+
+  const reportSnap = useCallback((pageId: string, axes: SnapAxes) => {
+    setSnapAxes((prev) => {
+      if (prev.pageId === pageId && prev.x === axes.x && prev.y === axes.y) return prev;
+      // A page stops reporting once its own drag ends (mouse:up) — if a *different* page's
+      // highlight is currently showing, a no-op report from this page shouldn't clear it.
+      if (prev.pageId !== pageId && !axes.x && !axes.y) return prev;
+      return { pageId, ...axes };
+    });
+  }, []);
 
   // Helper to get the active canvas
   const getActiveCanvas = useCallback((): fabric.Canvas | null => {
@@ -191,13 +219,18 @@ export function useCanvasState() {
       if (activeCanvasIdRef.current === pageId) refreshSelection();
     });
 
+    // Drag-to-center snap, gated by showGuides (see snapConfigRef above). object:modified
+    // fires after the drag ends and already saves history above, so a snapped position is
+    // captured for undo with no extra work.
+    installCenterSnapping(canvas, () => snapConfigRef.current, (axes) => reportSnap(pageId, axes));
+
     // Initial history snapshot
     setTimeout(() => {
       const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
       historyMapRef.current.set(pageId, { entries: [json], index: 0 });
       updateUndoRedoState(pageId);
     }, 100);
-  }, [saveHistory, updateUndoRedoState, refreshSelection]);
+  }, [saveHistory, updateUndoRedoState, refreshSelection, reportSnap]);
 
   const unregisterCanvas = useCallback((pageId: string) => {
     canvasMapRef.current.delete(pageId);
@@ -1053,6 +1086,7 @@ export function useCanvasState() {
     setFitScale,
     showGuides,
     toggleGuides: () => setShowGuides((v) => !v),
+    snapAxes,
     addText,
     applyTextToCanvas,
     addShape,
