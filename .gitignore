@@ -6,3 +6,6 @@ data.db-shm
 uploads/
 .env
 img_custom/
+
+# Config del MCP de Twenty/n8n: lleva API keys en la cabecera.
+.mcp.json
