@@ -978,7 +978,8 @@ sobreviviendo al refresco automático al reabrir. Sin errores de consola en ning
 El editor ya no sirve a un solo objeto de Twenty. Se añadió **`Events`** con exactamente la
 misma mecánica: campo Files **Imagen** como foto de origen y campo Links **Imagen Editada**
 como destino del resultado. Lo único que cambia entre objetos son los nombres de la API de
-GraphQL y de dónde sale el título por defecto, y eso vive en una sola tabla
+GraphQL y de dónde sale el título por defecto (y, desde §9.26, qué campos extra se piden y
+cómo se leen), y eso vive en una sola tabla
 (`OBJECTS` en [`src/server/twenty.ts`](src/server/twenty.ts)); todo lo demás — rutas,
 cliente, base de datos — es genérico y solo pasa el tipo por parámetro. Añadir un tercer
 objeto es una entrada más en esa tabla y una en la lista del cliente
@@ -1475,6 +1476,163 @@ suites de §9.21, §9.23 y §9.24 siguen pasando enteras. Sin errores de consola
 **Lo que esto NO hace:** no llama a ninguna IA. Si algún día se quiere el acabado concreto de
 un modelo de imagen (por ejemplo un reencuadre generativo), eso sería un endpoint nuevo con
 su clave de API, y habría que asumir que el texto deja de ser editable.
+
+### 9.26 Plantilla automática de eventos
+
+Petición del usuario: para los eventos, «una especie de estructura que siempre se repita y
+sea variable con respecto a los campos disponibles», de modo que abrir el editor con un
+evento requiera poca edición manual. Las noticias no cambian en nada.
+
+Un evento no es una foto con un titular: es un registro con una docena de datos publicables
+(cuándo, dónde, cuánto, de qué tipo) que hasta ahora había que teclear a mano en el lienzo
+mirando la ficha de Twenty en otra pestaña.
+
+#### Dos hechos de los datos reales que decidieron el diseño
+
+Verificados por MCP contra la instancia (98 registros, 39 inspeccionados campo a campo):
+
+1. **Las fechas están en UTC y hay que pintarlas en `Europe/Madrid`.** El espectáculo cuya
+   descripción dice «21:30 h» está guardado como `2026-08-22T19:30:00.000Z`. Formatear en
+   UTC —o fiarse de la zona del navegador— publica la hora equivocada en la imagen.
+2. **La «Imagen» de un evento casi nunca es una foto de prensa: es un cartel** que ya lleva
+   impresos el nombre, la fecha y el lugar (`cartel-final-rmf-alicante-598x1024.jpg`,
+   `Cartel-Actualizado-2026-1-768x960.jpg`). Eso condiciona el encuadre y, sobre todo,
+   explica el límite conocido del final de esta sección.
+
+Otros: `municipio` siempre relleno; `direccion` a veces vacía; `organizador` y
+`correoContacto` **vacíos en los 39 registros**, así que ni se piden; los campos vacíos
+llegan como `""` y no como `null` (se normalizan en el servidor, `blankToNull`); muchos
+nombres traen un separador (`|`, guión) que ya divide título y subtítulo.
+
+#### Piezas
+
+- **`src/server/twenty.ts`** — `TwentyObjectDef` gana `fieldsSelection`/`readFields`, ambos
+  **opcionales**: `news` no los define y su query se construye idéntica a la de antes, así
+  que no hay forma de que esto la afecte. `TwentyRecord` gana `fields`, que para una noticia
+  es `null`.
+- **`src/server/index.ts`** — `DEFAULT_CANVAS_SIZE` por tipo de objeto: `news` 1080×1080,
+  `event` **1080×1350** (4:5 aprovecha mucho mejor un cartel vertical y ocupa más pantalla
+  en el feed). Solo afecta a diseños nuevos; los ya creados conservan su tamaño.
+- **`src/client/lib/event-fields.ts`** (nuevo) — datos crudos → texto publicable. Sin
+  dependencias: `Intl.DateTimeFormat` con `timeZone: "Europe/Madrid"` cubre todo. Aquí viven
+  las reglas de fecha, `CATEGORY_LABELS`, la primera frase de la descripción y el troceo del
+  nombre en título + subtítulo.
+- **`src/client/lib/event-template.ts`** (nuevo) — dónde se coloca cada cosa. **Nada tiene
+  posición absoluta**: los bloques se declaran en orden, se miden de verdad y se apilan
+  anclados **por abajo**; el que no tiene dato no se crea y su hueco no existe. Anclar por
+  abajo es lo que mantiene la composición estable cuando el titular pasa de dos líneas a
+  cuatro.
+- **`src/client/components/event-panel.tsx`** (nuevo) — sección «Evento» del panel
+  izquierdo, visible solo si el diseño viene de un evento: «Rehacer plantilla», el
+  conmutador de modo, y la lista de campos encontrados/vacíos (la superficie de diagnóstico
+  de la pregunta que se va a hacer siempre: «¿por qué no sale la fecha?»).
+
+#### Los dos modos, y por qué el umbral está donde está
+
+- **«Cartel entero»**: el cartel se ve completo (contain) sobre un fondo hecho con la misma
+  imagen a *cover*, desenfocada y oscurecida; la ficha de datos va debajo.
+- **«A sangre»**: la imagen ocupa la página con degradado inferior y el bloque encima — el
+  layout de las noticias.
+
+La elección es automática por proporción, pero el umbral (`ASPECT_TOLERANCE = 1.08`) es
+deliberadamente **estrecho**, y el motivo no es geométrico: llevar un cartel a sangre hace
+dos daños a la vez, lo recorta y pone nuestro bloque encima de los datos que el cartel ya
+daba. Como no hay forma fiable de distinguir un cartel de una fotografía, el umbral se
+inclina al lado que no pierde información: solo va a sangre lo que encaja **sin recortar
+prácticamente nada**. Para el resto está el conmutador, a un clic.
+
+#### Orden de operaciones (lo delicado)
+
+`page-canvas.tsx` pasa de dos ramas con callbacks a medias a un único `bootstrap()`
+secuencial, porque la composición depende de dos cosas asíncronas: **el fondo cargado** (para
+conocer la proporción y elegir modo) y **las fuentes cargadas** (para medir el texto).
+
+```
+loadFromJSON → applyWorkspaceClip → normalizeBackgroundSource → applyLogoToCanvas
+  → GET /api/twenty/:type/:id
+  → applyBackgroundToCanvas({ preserveFraming, pageWidth, pageHeight })   ← ahora SÍ se espera
+  → composeEventOnCanvas(...)  [solo si la página está en blanco y es un evento]
+  → scheduleSave()
+```
+
+Dentro de `composeEventTemplate` se **apila dos veces**, con `syncCanvasFonts` en medio. No
+basta con recolocar un objeto como hace «Mejorar titular» (§9.25): si el titular pasa de dos
+líneas a tres al llegar Montserrat 800 real, se mueve todo lo que va debajo — hay que
+re-apilar entero.
+
+#### Un bug latente que este trabajo activó, y dos que introdujo
+
+- **Tamaño de página capturado obsoleto.** `page-canvas.tsx` monta con `deps: []` y usaba el
+  `width/height` capturado dentro de continuaciones asíncronas; `applyBackgroundToCanvas`
+  además cerraba sobre `canvasWidth/canvasHeight` del hook. Mientras todo medía 1080×1080 no
+  se notaba, pero el efecto que sincroniza el tamaño con el diseño (`app.tsx`) corre **un
+  render después** del montaje, así que con 1080×1350 la página se recortaba a un cuadrado y
+  el *cover* del fondo se calculaba contra la altura equivocada. Arreglado con un `sizeRef`
+  reasignado en cada render (el patrón de `onActivateRef`) y un `pageWidth`/`pageHeight`
+  explícito en las opciones de `applyBackgroundToCanvas`.
+- **`customProperties` no se hereda como parece.** `toObject()` serializa
+  `propertiesToInclude.concat(FabricObject.customProperties, this.constructor.customProperties)`.
+  Registrar el marcador solo en la clase base **no basta**: `Textbox` no declara
+  `customProperties` propia y por tanto la hereda —ahí sí aparecía—, pero `Rect` y
+  `FabricImage` sí la declaran (`effects.ts` y `background.ts` escriben las suyas) y esa
+  propiedad propia **tapa** la heredada. Observado en el `canvas_json` guardado: los textos
+  conservaban su rol y la píldora y el cartel lo perdían, con lo que al recargar «Rehacer
+  plantilla» ya no sabía que existían y **cada pasada dejaba un cartel más encima del
+  anterior** — el bug de §9.12 otra vez, por otra puerta. Se registra clase por clase y
+  **conservando** lo que cada una ya tuviera.
+- **`clone()` copia las propiedades registradas**, así que el cartel del modo cartel nacía
+  marcado como fondo (`_isBgImage`) y `findBackgroundImage` lo devolvía a él: el refresco
+  desde Twenty habría sustituido el cartel en vez del fondo. Se borra la marca al clonar.
+- `normalizeBackgroundSource` se generalizó a **todas** las imágenes (era el quinto punto de
+  entrada que §9.18 no cubría): el cartel también vuelve de `loadFromJSON` a resolución de
+  cámara y el filtro del fondo lo truncaría.
+
+#### Historial y guardado
+
+`composeEventOnCanvas` envuelve la composición en `isRestoringRef` —el mismo mecanismo que
+usa `loadTemplate`— así que los ~10 objetos que añade **no** son diez pasos de deshacer.
+Distingue dos usos: la composición automática **sella** el historial en una sola entrada (es
+el estado inicial del documento; deshacer hasta una página en blanco no es un estado útil),
+mientras que «Rehacer plantilla» deja **una** entrada, de modo que `Ctrl+Z` devuelve
+exactamente lo que había antes del clic. El snapshot inicial diferido de `registerCanvas`
+(100 ms) consulta ahora un `historySealedRef` antes de escribir, o machacaría lo compuesto.
+
+Y se llama a `scheduleSave()` al terminar: `saveDesign` ignora las páginas cuyo JSON sea
+`"{}"`, que es justo la condición de «primera vez» — sin guardar, la página seguiría
+contando como en blanco y **se recompondría en cada apertura**, pisando lo editado.
+
+#### Verificado contra el build de producción
+
+`pnpm run build && pnpm run start` en `:8788` con CSP real (regla de §9.11/§10.3), con
+Playwright y leyendo el `canvas_json` persistido por la API, no solo lo que se ve:
+
+- Las nueve reglas de fecha, contrastadas contra lo que dice la **descripción del propio
+  registro**: `19:30Z` → «Sábado 22 de agosto · 21:30 h» y `07:30Z` → 09:30, que es lo que
+  ponen sus textos. Las madrugadas (`23:30 → 07:00` Madrid) salen como una sola noche, no
+  como dos días.
+- Composición real de tres eventos: orden del stack `fondo → velo → [cartel] → categoría →
+  título → subtítulo → fecha → lugar → [píldora] → precio`, **cero solapes** (medidos par a
+  par), todo dentro de la página, un solo fondo, sin `data:image` en el `canvas_json`.
+- Campos ausentes: sin `direccion` el lugar sale solo con el municipio; con `precio:
+  DE_PAGO` la píldora no se crea y el resto sube a ocupar su sitio.
+- Modo cartel: 563×691 en (259, 80), la ficha empieza en y=851 — no se pisan; proporción del
+  bitmap conservada (0.814).
+- Persistencia: tras recargar, el `canvas_json` es **idéntico**, con exactamente un cartel y
+  un fondo (no se recompone ni se duplica).
+- `Ctrl+Z` tras cambiar de modo, exportación **2160×2700** (2× de 1080×1350), y una noticia
+  real abierta en paralelo: 1080×1080, imagen + titular, sin sección «Evento» ni bloques de
+  evento. Sin errores de consola en ningún paso.
+
+#### Límite conocido
+
+Cuando el cartel de origen ya trae impresos el nombre, la fecha y el lugar —lo habitual—, la
+ficha generada **repite** esa información. En modo cartel queda separada debajo, que es la
+disposición normal de un post de agenda; a sangre queda encima y se nota. No hay forma fiable
+de detectar «esta imagen ya lleva el texto», así que la decisión es editorial: el conmutador
+de modo y el borrado manual de un bloque son la salida. Si acabara siendo molesto, lo natural
+sería un tercer modo «solo cartel» que dejara únicamente la franja de datos que el cartel no
+da (o ninguna).
+
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 

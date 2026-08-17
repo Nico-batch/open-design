@@ -19,6 +19,31 @@ export interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
+  /** Campos publicables del registro. Solo los eventos declaran alguno; en una noticia
+   *  es null y el editor se comporta exactamente como antes (foto + titular). */
+  fields: EventFields | null;
+}
+
+/**
+ * Campos de un evento tal como los deja el servidor: ya normalizados, con las cadenas
+ * vacías de Twenty convertidas a null (ver `blankToNull` en src/server/twenty.ts), así que
+ * aquí "no hay dato" es siempre `null` y nunca `""`.
+ */
+export interface EventFields {
+  /** ISO 8601 en UTC — hay que formatearlo en Europe/Madrid (ver lib/event-fields.ts). */
+  fechaDeInicio: string | null;
+  fechaDeFin: string | null;
+  todoElDia: boolean;
+  municipio: string | null;
+  direccion: string | null;
+  /** "GRATIS" | "DE_PAGO" */
+  precio: string | null;
+  /** Uno de los 15 valores del enum de categoría; ver CATEGORY_LABELS. */
+  categoria: string | null;
+  destacado: boolean;
+  patrocinado: boolean;
+  /** Markdown, largo y con formato — se usa solo su primera frase. */
+  descripcion: string | null;
 }
 
 export interface Page {

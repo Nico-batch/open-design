@@ -2,7 +2,13 @@ import { useRef, useEffect } from "preact/hooks";
 import * as fabric from "fabric";
 import { useEditor } from "../context";
 import { applyLogoToCanvas } from "../lib/logo";
-import { findBackgroundImage, makeBackgroundInteractive, downscaleOversizedSource } from "../lib/background";
+import {
+  findBackgroundImage,
+  makeBackgroundInteractive,
+  normalizeBackgroundSource,
+} from "../lib/background";
+import { buildEventCopy } from "../lib/event-fields";
+import { findByRole, refreshPosterImage } from "../lib/event-template";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { GuidesOverlay } from "./guides-overlay";
@@ -19,16 +25,14 @@ interface PageCanvasProps {
 }
 
 export function PageCanvas({ page, isActive, width, height, onActivate }: PageCanvasProps) {
-  const {
-    registerCanvas,
-    unregisterCanvas,
-    activeDesign,
-    pages,
-    applyBackgroundToCanvas,
-    applyTextToCanvas,
-    syncEffectsFromCanvas,
-    showGuides,
-  } = useEditor();
+  const editor = useEditor();
+  const { registerCanvas, unregisterCanvas, activeDesign, pages, showGuides } = editor;
+  // Reasignado en cada render (no dentro de un efecto), el mismo patrón que onActivateRef:
+  // el efecto de montaje corre con deps [] y sus continuaciones asíncronas se ejecutan
+  // mucho después, así que leer el contexto capturado daría callbacks de hace varios
+  // renders — y con ellos el tamaño de página inicial.
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const onActivateRef = useRef(onActivate);
@@ -36,6 +40,13 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
   // Captured once at mount — this effect only ever runs on mount (empty deps below),
   // so later changes to these wouldn't be picked up anyway; that's fine, they're stable
   // for the lifetime of a single "open the editor" session.
+  // El tamaño de la página llega un render *después* de que este canvas se monte: el
+  // efecto que sincroniza `canvasWidth/Height` con el diseño (app.tsx) corre tras el
+  // primer render, así que al montar todavía valen 1080×1080. Para un evento, que nace a
+  // 1080×1350, usar el valor capturado recortaría la página a un cuadrado y calcularía el
+  // `cover` del fondo contra la altura equivocada.
+  const sizeRef = useRef({ width, height });
+  sizeRef.current = { width, height };
   const twentyRecordIdRef = useRef(activeDesign?.twenty_record_id ?? null);
   const twentyObjectTypeRef = useRef(coerceTwentyObjectType(activeDesign?.twenty_object_type));
   const isPrimaryPageRef = useRef(pages[0]?.id === page.id);
@@ -151,72 +162,88 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
       if (e.target) applyCustomControls(e.target);
     });
 
-    // If this is the primary page of a design linked to a Twenty record (a News or an
-    // Events one), refresh the source image from Twenty every time the editor loads — the
-    // source "Imagen" in Twenty can change after a draft was already saved (e.g. it
-    // didn't fit and got swapped), so we shouldn't keep showing whatever was fetched the
-    // first time. Text
-    // content the operator already wrote is left alone; only the background image is
-    // replaced. Runs strictly *after* the saved JSON has finished loading below —
-    // loadFromJSON replaces the whole canvas, so doing this any earlier would just get
-    // wiped out once it resolves.
-    const refreshFromTwenty = (isBlankPage: boolean) => {
-      const twentyRecordId = twentyRecordIdRef.current;
-      if (!isPrimaryPageRef.current || !twentyRecordId) return;
-      api<TwentyRecord>("GET", `/api/twenty/${twentyObjectTypeRef.current}/${twentyRecordId}`)
-        .then((record) => {
-          // preserveFraming: the image is re-fetched on every open, so re-fitting it
-          // unconditionally would undo any manual repositioning the operator had saved.
-          if (record.imageUrl) {
-            const applied = applyBackgroundToCanvas(c, page.id, "image", record.imageUrl, "cover", {
-              preserveFraming: true,
-            });
-            // The refresh swaps the background object, so re-read the effect values from
-            // the replacement rather than from the one that was just discarded.
-            Promise.resolve(applied).then(() => syncEffectsFromCanvas(c));
-          }
-          if (isBlankPage && record.title) applyTextToCanvas(c, "heading", record.title);
-        })
-        .catch((e) => console.error("Failed to refresh source image from Twenty:", e));
+    // Arranque de la página, en un solo hilo secuencial.
+    //
+    // Todo esto tiene que ir en orden y esperándose de verdad: `loadFromJSON` sustituye el
+    // contenido entero del lienzo (lo añadido antes se perdería), la plantilla de eventos
+    // necesita el fondo ya cargado para saber si el cartel encaja en la página, y el texto
+    // no se puede medir hasta que estén las fuentes. Antes esto eran dos ramas con
+    // callbacks encadenados a medias, con el refresco de Twenty disparado y sin esperar.
+    const bootstrap = async () => {
+      const saved = !!(page.canvas_json && page.canvas_json !== "{}");
+
+      if (saved) {
+        await c.loadFromJSON(JSON.parse(page.canvas_json));
+        // loadFromJSON borra el clipPath que puso applyWorkspaceGeometry: sin esto, un
+        // diseño guardado se abriría pintando sobre toda el área de trabajo (§9.16).
+        applyWorkspaceClip(c, sizeRef.current.width, sizeRef.current.height);
+        // Las imágenes vuelven reconstruidas desde su `src`, es decir a resolución
+        // completa otra vez, y el filtro las truncaría por encima de 4096 px (§9.18).
+        normalizeBackgroundSource(c);
+        // Los diseños guardados cuando el fondo era una capa bloqueada traen
+        // `selectable: false` grabado en su JSON; desbloquearlos para poder reencuadrar.
+        const bg = findBackgroundImage(c);
+        if (bg) makeBackgroundInteractive(bg);
+      }
+
+      await applyLogoToCanvas(c, sizeRef.current.width, sizeRef.current.height);
+      c.requestRenderAll();
+
+      if (saved) {
+        // El texto guardado se midió con la fuente que hubiera disponible cuando se creó;
+        // re-medir ahora que podemos garantizar las caras reales (lib/fonts.ts).
+        syncCanvasFonts(c);
+        editorRef.current.syncEffectsFromCanvas(c);
+      }
+
+      // ── Datos de Twenty ──────────────────────────────────────────────
+      const recordId = twentyRecordIdRef.current;
+      if (!isPrimaryPageRef.current || !recordId) return;
+      const objectType = twentyObjectTypeRef.current;
+
+      const record = await api<TwentyRecord>("GET", `/api/twenty/${objectType}/${recordId}`);
+      const { width: pageWidth, height: pageHeight } = sizeRef.current;
+
+      // La imagen se re-pide en cada apertura porque la "Imagen" de Twenty puede haberse
+      // sustituido después de guardar un borrador. `preserveFraming` evita que ese refresco
+      // deshaga el reencuadre (y los filtros) que el operador ya hubiera ajustado.
+      if (record.imageUrl) {
+        await editorRef.current.applyBackgroundToCanvas(
+          c,
+          page.id,
+          "image",
+          record.imageUrl,
+          "cover",
+          { preserveFraming: true, pageWidth, pageHeight }
+        );
+        editorRef.current.syncEffectsFromCanvas(c);
+      }
+
+      if (objectType === "event" && record.fields && record.title && !saved) {
+        // Página en blanco de un evento: se compone la plantilla entera con los campos que
+        // tenga el registro. `seal` deja el historial en una sola entrada — esto es el
+        // estado inicial del documento, no un paso que tenga sentido deshacer.
+        await editorRef.current.composeEventOnCanvas(
+          c,
+          page.id,
+          buildEventCopy(record.fields, record.title),
+          { pageWidth, pageHeight, seal: true }
+        );
+        // Sin guardar, la página seguiría contando como "en blanco" (saveDesign ignora el
+        // JSON "{}") y volvería a componerse en cada apertura, pisando lo que el operador
+        // hubiera editado entretanto.
+        editorRef.current.scheduleSave();
+      } else if (objectType === "event" && findByRole(c, "poster")) {
+        // Modo cartel ya compuesto: el cartel de encima también tiene que reflejar la foto
+        // nueva, no solo el fondo desenfocado de detrás.
+        await refreshPosterImage(c);
+      } else if (!saved && record.title) {
+        // Noticias: exactamente el comportamiento de siempre.
+        editorRef.current.applyTextToCanvas(c, "heading", record.title);
+      }
     };
 
-    // Load page content, then add the fixed logo layer on top
-    if (page.canvas_json && page.canvas_json !== "{}") {
-      try {
-        c.loadFromJSON(JSON.parse(page.canvas_json)).then(async () => {
-          // loadFromJSON wipes the clip path set by applyWorkspaceGeometry above, so any
-          // saved design would otherwise open painting across the whole workspace.
-          applyWorkspaceClip(c, width, height);
-          // Designs saved while the background was still a locked layer restore with
-          // `selectable: false` baked into their JSON — unlock those so the operator can
-          // reframe them too, not just newly created ones.
-          const bg = findBackgroundImage(c);
-          if (bg) {
-            makeBackgroundInteractive(bg);
-            // Rebuilt from its saved URL, so it's back at full camera resolution and would
-            // truncate under the filter pipeline again (lib/background.ts). Doing it here,
-            // before the Twenty refresh below, also means both images are at the same
-            // resolution when the framing gets carried across.
-            downscaleOversizedSource(bg);
-          }
-          await applyLogoToCanvas(c, width, height);
-          c.requestRenderAll();
-          // Saved text was measured against whatever font was available when it was
-          // *created*; re-measure now that we can guarantee the real faces (lib/fonts.ts).
-          syncCanvasFonts(c);
-          // Restore the effects panel to whatever this design was saved with.
-          syncEffectsFromCanvas(c);
-          refreshFromTwenty(false);
-        });
-      } catch {
-        // ignore parse errors
-      }
-    } else {
-      applyLogoToCanvas(c, width, height).then(() => {
-        c.requestRenderAll();
-        refreshFromTwenty(true);
-      });
-    }
+    bootstrap().catch((e) => console.error("Fallo al preparar la página:", e));
 
     // On mouse down, activate this canvas (use ref to avoid stale closure)
     c.on("mouse:down", () => onActivateRef.current());

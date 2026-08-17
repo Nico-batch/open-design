@@ -65,6 +65,25 @@ interface TwentyObjectDef {
   titleSelection: string;
   /** Cómo leer ese campo de la respuesta. */
   readTitle: (node: Record<string, any>) => string | null;
+  /**
+   * Selección GraphQL extra con los campos publicables del objeto, para los tipos que
+   * componen algo más que "foto + titular". Opcional a propósito: News no lo define y su
+   * respuesta no cambia en absoluto.
+   */
+  fieldsSelection?: string;
+  /** Cómo convertir esos campos al payload plano que consume el cliente. */
+  readFields?: (node: Record<string, any>) => Record<string, unknown>;
+}
+
+/**
+ * Twenty devuelve los campos de texto vacíos como cadena vacía, no como null — verificado
+ * sobre la instancia real: `organizador`, `direccion`, `correoContacto` y los Links llegan
+ * como `""` cuando nadie los ha rellenado. Normalizarlo aquí, en el único sitio por el que
+ * pasan, evita que cada bloque de la plantilla tenga que repetir la comprobación (y que se
+ * cuele un bloque vacío en el diseño porque alguien comprobó `!= null` y no `!== ""`).
+ */
+function blankToNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
@@ -79,6 +98,34 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
     updateMutation: "updateEventCustom",
     titleSelection: "name",
     readTitle: (node) => (typeof node.name === "string" ? node.name.trim() || null : null),
+    // Los campos que de verdad se publican en un post de agenda. Quedan fuera a propósito:
+    // `organizador` y `correoContacto` (vacíos en los 39 registros inspeccionados),
+    // `urlWeb`/`fuente`/`enlaceEvento`/`webId` (no van en la imagen) y `comentarios` (notas
+    // internas de la redacción).
+    fieldsSelection: `
+      fechaDeInicio
+      fechaDeFin
+      todoElDia
+      municipio
+      direccion
+      precio
+      categoria
+      destacado
+      patrocinado
+      descripcion { markdown }
+    `,
+    readFields: (node) => ({
+      fechaDeInicio: blankToNull(node.fechaDeInicio),
+      fechaDeFin: blankToNull(node.fechaDeFin),
+      todoElDia: node.todoElDia === true,
+      municipio: blankToNull(node.municipio),
+      direccion: blankToNull(node.direccion),
+      precio: blankToNull(node.precio),
+      categoria: blankToNull(node.categoria),
+      destacado: node.destacado === true,
+      patrocinado: node.patrocinado === true,
+      descripcion: blankToNull(node.descripcion?.markdown),
+    }),
   },
 };
 
@@ -86,6 +133,8 @@ export interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
+  /** Campos publicables del registro, o null si el objeto no declara ninguno (News). */
+  fields: Record<string, unknown> | null;
 }
 
 /** Lee el registro: su título por defecto y la URL (firmada, de corta duración) de la
@@ -103,16 +152,19 @@ export async function fetchRecord(type: TwentyObjectType, id: string): Promise<T
         id
         ${def.titleSelection}
         imagen { url }
+        ${def.fieldsSelection ?? ""}
       }
     }`,
     { id }
   );
 
   if (!data.record) return null;
+  const node = data.record as Record<string, any>;
   return {
     id: data.record.id,
-    title: def.readTitle(data.record as Record<string, any>),
+    title: def.readTitle(node),
     imageUrl: data.record.imagen?.[0]?.url || null,
+    fields: def.readFields ? def.readFields(node) : null,
   };
 }
 

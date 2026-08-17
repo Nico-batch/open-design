@@ -485,6 +485,19 @@ function parseObjectType(raw: string): TwentyObjectType | null {
   return isTwentyObjectType(raw) ? raw : null;
 }
 
+/**
+ * Tamaño del lienzo con el que nace un diseño segun de que objeto venga.
+ *
+ * Un evento llega casi siempre con un cartel vertical por imagen (comprobado sobre la
+ * instancia real: `cartel-...-598x1024.jpg`, `...-768x960.jpg`), asi que 4:5 lo aprovecha
+ * mucho mejor que el cuadrado — y ademas ocupa mas pantalla en el feed. Solo afecta a
+ * diseños nuevos; los ya creados conservan el tamaño con el que se guardaron.
+ */
+const DEFAULT_CANVAS_SIZE: Record<TwentyObjectType, { width: number; height: number }> = {
+  news: { width: 1080, height: 1080 },
+  event: { width: 1080, height: 1350 },
+};
+
 async function twentyRecordResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
   try {
     const record = await fetchRecord(objectType, id);
@@ -493,6 +506,7 @@ async function twentyRecordResponse(objectType: TwentyObjectType, id: string): P
       id: record.id,
       title: record.title,
       imageUrl: record.imageUrl ? `/api/twenty/${objectType}/${id}/image` : null,
+      fields: record.fields,
     });
   } catch (e) {
     return Response.json(
@@ -570,9 +584,10 @@ app.post("/api/designs/from-twenty/:type/:recordId", async (c) => {
     // best effort — fall back to the default name
   }
 
+  const size = DEFAULT_CANVAS_SIZE[objectType];
   await run(
     "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id, twenty_object_type) VALUES (?, ?, ?, ?, ?, ?)",
-    [name, "{}", 1080, 1080, recordId, objectType]
+    [name, "{}", size.width, size.height, recordId, objectType]
   );
   const row = await get<z.infer<typeof DesignSchema>>(
     "SELECT * FROM designs WHERE twenty_record_id = ? AND COALESCE(twenty_object_type, 'news') = ?",

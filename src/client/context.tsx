@@ -1,6 +1,8 @@
 import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { Design, Template, Page } from "./types";
+import type { EventCopy } from "./lib/event-fields";
+import type { EventLayoutMode } from "./lib/event-template";
 import type * as fabric from "fabric";
 import type { BackgroundEffects, ScrimKind } from "./lib/effects";
 
@@ -49,7 +51,7 @@ export interface EditorContextValue {
     type: "color" | "gradient" | "image",
     value: string,
     fit?: "cover" | "contain",
-    options?: { preserveFraming?: boolean }
+    options?: { preserveFraming?: boolean; pageWidth?: number; pageHeight?: number }
   ) => Promise<void> | void;
   setBackgroundImageFit: (fit: "cover" | "contain") => void;
   setBackgroundScale: (scale: number) => void;
@@ -63,6 +65,14 @@ export interface EditorContextValue {
   /** The "local news post" recipe — see lib/enhance.ts. Both return false if nothing to do. */
   enhancePhoto: () => boolean;
   enhanceHeadline: () => boolean;
+  /** Compone la plantilla de un evento sobre un canvas concreto — ver lib/event-template.ts. */
+  composeEventOnCanvas: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    copy: EventCopy,
+    opts: { pageWidth: number; pageHeight: number; mode?: EventLayoutMode; seal?: boolean }
+  ) => Promise<EventLayoutMode | null>;
+  getCanvasForPage: (pageId: string) => fabric.Canvas | null;
   updateSelectedObject: (props: Record<string, unknown>) => void;
   /** Text formatting that respects a character selection — see lib/text-styles.ts. */
   applyTextStyle: (props: Record<string, unknown>) => void;
@@ -96,6 +106,10 @@ export interface EditorContextValue {
   createFromTemplate: (template: Template) => Promise<string | undefined>;
   loadDesign: (id: string) => Promise<void>;
   saveDesign: () => Promise<void>;
+  /** Guardado diferido. Lo usa la composición automática de eventos para persistir la
+   *  página recién compuesta: si no se guardara, seguiría contando como "en blanco" y se
+   *  recompondría en cada apertura, pisando lo que el operador hubiera editado. */
+  scheduleSave: () => void;
   publishToTwenty: (pngBlob: Blob) => Promise<string | undefined>;
   deleteDesign: (id: string) => Promise<void>;
   renameDesign: (id: string, name: string) => Promise<void>;

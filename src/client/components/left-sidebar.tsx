@@ -11,12 +11,15 @@ import {
   LayoutGrid,
   Sparkles,
   WandSparkles,
+  CalendarDays,
 } from "lucide-preact";
 import { useEditor } from "../context";
 import { TemplateCard } from "./template-card";
 import { DesignList } from "./design-list";
+import { EventPanel } from "./event-panel";
+import { coerceTwentyObjectType } from "../lib/twenty";
 
-type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs";
+type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs" | "event";
 
 const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "templates", icon: Sparkles, label: "Templates" },
@@ -27,6 +30,13 @@ const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "designs", icon: LayoutGrid, label: "Designs" },
 ];
 
+/** Solo aparece cuando el diseño viene de un evento del CRM. */
+const EVENT_SECTION: { key: Section; icon: typeof LayoutGrid; label: string } = {
+  key: "event",
+  icon: CalendarDays,
+  label: "Evento",
+};
+
 const SECTION_TITLES: Record<Section, string> = {
   templates: "Templates",
   shapes: "Elements",
@@ -34,6 +44,7 @@ const SECTION_TITLES: Record<Section, string> = {
   images: "Uploads",
   background: "Background",
   designs: "Designs",
+  event: "Evento",
 };
 
 const GRADIENT_PRESETS = [
@@ -55,8 +66,12 @@ const BG_COLORS = [
 export function LeftSidebar() {
   const { addText, addShape, addImage, setBackground, setBackgroundImageFit,
     backgroundEffects, setBackgroundEffects, scrim, setScrim, templates, loadTemplate,
-    enhancePhoto } =
+    enhancePhoto, activeDesign } =
     useEditor();
+  const isEventDesign =
+    !!activeDesign?.twenty_record_id &&
+    coerceTwentyObjectType(activeDesign.twenty_object_type) === "event";
+  const sections = isEventDesign ? [EVENT_SECTION, ...SECTIONS] : SECTIONS;
   const [activeSection, setActiveSection] = useState<Section | null>("templates");
   const [uploading, setUploading] = useState(false);
   const [bgFit, setBgFit] = useState<"cover" | "contain">("cover");
@@ -118,7 +133,7 @@ export function LeftSidebar() {
     <aside class="flex flex-row shrink-0">
       {/* Icon Rail */}
       <div class="w-[70px] bg-zinc-900 border-r border-zinc-800 flex flex-col items-center pt-2 gap-0.5 shrink-0">
-        {SECTIONS.map((s) => (
+        {sections.map((s) => (
           <button
             key={s.key}
             class={`flex flex-col items-center justify-center gap-0.5 w-[56px] h-[56px] rounded-lg bg-transparent border-none cursor-pointer transition-all ${
@@ -464,6 +479,8 @@ export function LeftSidebar() {
                     </div>
                   </div>
                 )}
+
+                {activeSection === "event" && <EventPanel />}
 
                 {activeSection === "designs" && <DesignList />}
               </div>

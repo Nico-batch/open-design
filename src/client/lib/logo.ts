@@ -28,6 +28,19 @@ export function isLogoObject(obj: fabric.FabricObject | undefined | null): boole
   return !!obj && (obj as any)._isLogo === true;
 }
 
+/**
+ * Devuelve el logo al frente.
+ *
+ * Hace falta porque `canvas.add()` apila encima: cualquier cosa que se añada *después* de
+ * la capa del logo —como los bloques de la plantilla de eventos, que se componen una vez
+ * el logo ya está puesto— quedaría tapándolo. Más barato que volver a llamar a
+ * `applyLogoToCanvas`, que reconstruye la imagen entera.
+ */
+export function bringLogoToFront(canvas: fabric.Canvas): void {
+  const logo = canvas.getObjects().find(isLogoObject);
+  if (logo) canvas.bringObjectToFront(logo);
+}
+
 function positionLogo(obj: fabric.FabricObject, canvasWidth: number, canvasHeight: number) {
   const naturalWidth = (obj.width || 1) as number;
   const targetWidth = Math.min(canvasWidth * MAX_WIDTH_RATIO, MAX_WIDTH_PX);

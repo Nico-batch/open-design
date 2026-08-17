@@ -32,6 +32,8 @@ import {
   type ScrimKind,
 } from "../lib/effects";
 import { installCenterSnapping, type SnapAxes, type SnapConfig } from "../lib/snapping";
+import { composeEventTemplate, type EventLayoutMode } from "../lib/event-template";
+import type { EventCopy } from "../lib/event-fields";
 
 const MAX_HISTORY = 50;
 
@@ -98,6 +100,10 @@ export function useCanvasState() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const isRestoringRef = useRef<Set<string>>(new Set());
+  // Páginas cuyo historial ya ha fijado alguien a propósito (ver `sealHistory`). El
+  // snapshot inicial diferido de `registerCanvas` lo consulta antes de escribir, o
+  // machacaría el estado ya compuesto con el lienzo vacío de hace 100 ms.
+  const historySealedRef = useRef<Set<string>>(new Set());
 
   // Reassigned every render (not in an effect) — cheap, and guarantees the snap handler
   // never reads a stale value, the same pattern page-canvas.tsx uses for onActivateRef.
@@ -226,11 +232,19 @@ export function useCanvasState() {
 
     // Initial history snapshot
     setTimeout(() => {
+      if (historySealedRef.current.has(pageId)) return;
       const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
       historyMapRef.current.set(pageId, { entries: [json], index: 0 });
       updateUndoRedoState(pageId);
     }, 100);
   }, [saveHistory, updateUndoRedoState, refreshSelection, reportSnap]);
+
+  /** El canvas de una página concreta. "Rehacer plantilla" siempre actúa sobre la página
+   *  principal del diseño, que no tiene por qué ser la que el operador esté mirando. */
+  const getCanvasForPage = useCallback(
+    (pageId: string) => canvasMapRef.current.get(pageId) ?? null,
+    []
+  );
 
   const unregisterCanvas = useCallback((pageId: string) => {
     canvasMapRef.current.delete(pageId);
@@ -413,8 +427,15 @@ export function useCanvasState() {
       type: "color" | "gradient" | "image",
       value: string,
       fit: "cover" | "contain" = "cover",
-      options?: { preserveFraming?: boolean }
+      options?: { preserveFraming?: boolean; pageWidth?: number; pageHeight?: number }
     ) => {
+      // El tamaño puede venir dado por el llamante en vez de leerse del estado del hook.
+      // page-canvas.tsx captura este callback una sola vez (efecto con deps []) y lo usa
+      // dentro de continuaciones asíncronas, así que para un diseño que no mide 1080×1080
+      // —los eventos nacen a 1080×1350— leer el estado daría el tamaño *inicial* y el
+      // `cover` se calcularía contra un cuadrado, dejando una franja muerta abajo.
+      const pageW = options?.pageWidth ?? canvasWidth;
+      const pageH = options?.pageHeight ?? canvasHeight;
       if (type === "color" || type === "gradient") {
         canvas.backgroundColor = value;
         canvas.requestRenderAll();
@@ -461,7 +482,7 @@ export function useCanvasState() {
               img.applyFilters();
             }
           } else {
-            fitBackgroundImage(img, canvasWidth, canvasHeight, fit);
+            fitBackgroundImage(img, pageW, pageH, fit);
             (img as any)._bgFit = fit;
           }
 
@@ -618,6 +639,60 @@ export function useCanvasState() {
     });
     return true;
   }, [getActiveCanvas, selectedObject, canvasWidth, canvasHeight, saveHistory, refreshSelection]);
+
+  // ── Plantilla de eventos ────────────────────────────────────────────
+
+  /**
+   * Compone (o recompone) la plantilla de un evento sobre un canvas concreto.
+   *
+   * Parametrizado por canvas y no por "el canvas activo" por el mismo motivo que
+   * `applyBackgroundToCanvas` (ver arriba): page-canvas.tsx tiene que encadenarlo
+   * justo después de que el fondo termine de cargar, y esa indirección no da ninguna
+   * garantía de orden. El tamaño de página también se pasa explícito — el estado del
+   * hook puede ir un render por detrás cuando el diseño no mide 1080×1080.
+   *
+   * `seal` distingue los dos usos: la composición automática es el *estado inicial* del
+   * documento, así que deja el historial con una sola entrada (deshacer hasta una página
+   * en blanco no es un estado útil); "Rehacer plantilla" es una acción del operador y deja
+   * una entrada más, de modo que Ctrl+Z devuelve exactamente lo que había antes del clic.
+   */
+  const composeEventOnCanvas = useCallback(
+    async (
+      canvas: fabric.Canvas,
+      pageId: string,
+      copy: EventCopy,
+      opts: { pageWidth: number; pageHeight: number; mode?: EventLayoutMode; seal?: boolean }
+    ): Promise<EventLayoutMode | null> => {
+      // Una composición añade y quita cerca de diez objetos; sin esto cada uno sería un
+      // paso de deshacer y Ctrl+Z iría desmontando la plantilla pieza a pieza.
+      isRestoringRef.current.add(pageId);
+      let mode: EventLayoutMode | null = null;
+      try {
+        mode = await composeEventTemplate(canvas, copy, {
+          pageWidth: opts.pageWidth,
+          pageHeight: opts.pageHeight,
+          mode: opts.mode,
+        });
+      } catch (e) {
+        console.error("No se pudo componer la plantilla del evento:", e);
+      } finally {
+        isRestoringRef.current.delete(pageId);
+        if (opts.seal) {
+          historySealedRef.current.add(pageId);
+          const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
+          historyMapRef.current.set(pageId, { entries: [json], index: 0 });
+        } else {
+          saveHistory(pageId);
+        }
+        updateUndoRedoState(pageId);
+      }
+      // El modo fija el desenfoque y el velo del fondo; sin esto los deslizadores del panel
+      // Bg seguirían enseñando los valores anteriores y mentirían sobre lo que hay puesto.
+      syncEffectsFromCanvas(canvas);
+      return mode;
+    },
+    [saveHistory, updateUndoRedoState, syncEffectsFromCanvas]
+  );
 
   // ── Object manipulation ─────────────────────────────────────────────
 
@@ -1102,6 +1177,8 @@ export function useCanvasState() {
     syncEffectsFromCanvas,
     enhancePhoto,
     enhanceHeadline,
+    composeEventOnCanvas,
+    getCanvasForPage,
     updateSelectedObject,
     applyTextStyle,
     clearTextStyle,

@@ -92,8 +92,15 @@ export function downscaleOversizedSource(img: fabric.FabricImage): boolean {
  * need this or the truncation comes back on the next filter change.
  */
 export function normalizeBackgroundSource(canvas: fabric.Canvas): void {
-  const bg = findBackgroundImage(canvas);
-  if (bg) downscaleOversizedSource(bg);
+  // Todas las imágenes, no solo el fondo: la plantilla de eventos en modo "cartel entero"
+  // deja una segunda imagen en el lienzo (el cartel sin recortar, encima del fondo
+  // desenfocado), y esa vuelve de `loadFromJSON` a resolución de cámara exactamente igual
+  // que el fondo. Si se quedara sin reducir, el propio desenfoque del fondo la truncaría
+  // en cuanto se tocara cualquier filtro. El logo se excluye: es un PNG pequeño y su capa
+  // la regenera `applyLogoToCanvas`.
+  for (const obj of canvas.getObjects()) {
+    if (obj instanceof fabric.FabricImage && !isLogoObject(obj)) downscaleOversizedSource(obj);
+  }
 }
 
 export function isBackgroundImage(obj: fabric.FabricObject | undefined | null): boolean {
