@@ -19,6 +19,7 @@ export function Toolbar() {
     canvasWidth,
     canvasHeight,
     setCanvasSize,
+    scheduleSave,
     undo,
     redo,
     canUndo,
@@ -45,6 +46,7 @@ export function Toolbar() {
   const [nameValue, setNameValue] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishOk, setPublishOk] = useState<string | null>(null);
 
   const handlePublish = async () => {
     setPublishing(true);
@@ -52,8 +54,14 @@ export function Toolbar() {
     try {
       const blob = await exportUploadBlob();
       if (!blob) throw new Error("No se pudo exportar la imagen");
-      await publishToTwenty(blob);
+      const { field } = await publishToTwenty(blob);
+      // Decir a qué campo ha ido no es cosmético: con tres formatos disponibles, la
+      // diferencia entre "Imagen Editada" e "Imagen Story" es lo único que distingue una
+      // subida correcta de haber exportado el formato equivocado.
+      setPublishOk(field === "imagenStory" ? "Guardado en Imagen Story" : "Guardado en Imagen Editada");
+      setTimeout(() => setPublishOk(null), 4000);
     } catch (e) {
+      setPublishOk(null);
       setPublishError(e instanceof Error ? e.message : "Error al publicar en Twenty");
     } finally {
       setPublishing(false);
@@ -134,6 +142,10 @@ export function Toolbar() {
                     }`}
                     onClick={() => {
                       setCanvasSize(s.width, s.height);
+                      // El tamaño ahora se persiste con el diseño (y la plantilla de
+                      // eventos se re-apila para él), así que hay que guardarlo o al
+                      // recargar volvería el formato anterior con la maqueta del nuevo.
+                      scheduleSave();
                       setShowSizeDropdown(false);
                     }}
                   >
@@ -237,6 +249,11 @@ export function Toolbar() {
           </button>
         )}
       </div>
+      {publishOk && !publishError && (
+        <div class="absolute top-full right-3 mt-1 px-2.5 py-1.5 rounded-md bg-emerald-950 border border-emerald-900 text-[11px] text-emerald-300 shadow-md z-30">
+          {publishOk}
+        </div>
+      )}
       {publishError && (
         <div class="absolute top-full right-3 mt-1 px-2.5 py-1.5 rounded-md bg-red-950 border border-red-900 text-[11px] text-red-300 shadow-md z-30">
           {publishError}

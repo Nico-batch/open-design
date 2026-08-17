@@ -32,7 +32,12 @@ import {
   type ScrimKind,
 } from "../lib/effects";
 import { installCenterSnapping, type SnapAxes, type SnapConfig } from "../lib/snapping";
-import { composeEventTemplate, type EventLayoutMode } from "../lib/event-template";
+import {
+  composeEventTemplate,
+  relayoutEventTemplate,
+  type EventLayoutMode,
+  type EventTheme,
+} from "../lib/event-template";
 import type { EventCopy } from "../lib/event-fields";
 
 const MAX_HISTORY = 50;
@@ -100,6 +105,7 @@ export function useCanvasState() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const isRestoringRef = useRef<Set<string>>(new Set());
+  const canvasSizeRef = useRef({ width: 1080, height: 1080 });
   // Páginas cuyo historial ya ha fijado alguien a propósito (ver `sealHistory`). El
   // snapshot inicial diferido de `registerCanvas` lo consulta antes de escribir, o
   // machacaría el estado ya compuesto con el lienzo vacío de hace 100 ms.
@@ -108,6 +114,12 @@ export function useCanvasState() {
   // Reassigned every render (not in an effect) — cheap, and guarantees the snap handler
   // never reads a stale value, the same pattern page-canvas.tsx uses for onActivateRef.
   snapConfigRef.current = { enabled: showGuides, pageWidth: canvasWidth, pageHeight: canvasHeight, zoom };
+  // Mismo motivo, y además uno propio: `getCanvasSize` lo consume el guardado **diferido**
+  // de useDesigns. Si leyera el estado a través de un useCallback, quien llama a
+  // `scheduleSave()` justo después de cambiar de tamaño estaría usando todavía el callback
+  // del render anterior, y a los 2 s se guardaría el tamaño viejo — que es exactamente lo
+  // que pasaba: la página volvía a su formato original al recargar.
+  canvasSizeRef.current = { width: canvasWidth, height: canvasHeight };
 
   const reportSnap = useCallback((pageId: string, axes: SnapAxes) => {
     setSnapAxes((prev) => {
@@ -581,7 +593,10 @@ export function useCanvasState() {
       const pageId = activeCanvasIdRef.current;
       if (!canvas || !pageId) return;
       setScrimState({ kind, opacity });
-      applyScrim(canvas, canvasWidth, canvasHeight, kind, opacity);
+      // Se conserva el tono que hubiera puesto el tema de la plantilla: tocar la
+      // intensidad del velo desde el panel Bg no debe devolverlo a oscuro y arruinar un
+      // diseño de tinta oscura.
+      applyScrim(canvas, canvasWidth, canvasHeight, kind, opacity, readScrim(canvas).tone);
       saveHistory(pageId);
     },
     [getActiveCanvas, canvasWidth, canvasHeight, saveHistory]
@@ -661,7 +676,13 @@ export function useCanvasState() {
       canvas: fabric.Canvas,
       pageId: string,
       copy: EventCopy,
-      opts: { pageWidth: number; pageHeight: number; mode?: EventLayoutMode; seal?: boolean }
+      opts: {
+        pageWidth: number;
+        pageHeight: number;
+        mode?: EventLayoutMode;
+        theme?: EventTheme;
+        seal?: boolean;
+      }
     ): Promise<EventLayoutMode | null> => {
       // Una composición añade y quita cerca de diez objetos; sin esto cada uno sería un
       // paso de deshacer y Ctrl+Z iría desmontando la plantilla pieza a pieza.
@@ -672,6 +693,7 @@ export function useCanvasState() {
           pageWidth: opts.pageWidth,
           pageHeight: opts.pageHeight,
           mode: opts.mode,
+          theme: opts.theme,
         });
       } catch (e) {
         console.error("No se pudo componer la plantilla del evento:", e);
@@ -975,11 +997,26 @@ export function useCanvasState() {
         applyLogoToCanvas(canvas, width, height);
         // The scrim covers the page, so it has to follow the page's new size.
         resizeScrim(canvas, width, height);
+        // El fondo estaba encajado contra la página anterior: al pasar de cuadrado a
+        // historia se quedaría cubriendo poco más de la mitad. Se reencaja con el mismo
+        // modo (cover/contain) que tuviera. Sí, esto descarta un reencuadre manual — pero
+        // ese encuadre describía una página que ya no existe.
+        const bg = findBackgroundImage(canvas);
+        if (bg) {
+          fitBackgroundImage(bg, width, height, ((bg as any)._bgFit as "cover" | "contain") ?? "cover");
+          bg.setCoords();
+        }
+        // Y la plantilla de eventos se re-apila contra el nuevo borde inferior.
+        relayoutEventTemplate(canvas, width, height);
         canvas.requestRenderAll();
       }
     },
     []
   );
+
+  /** El tamaño vigente, para que `useDesigns` pueda persistirlo con el diseño. Lee de un
+   *  ref, no del estado, para no quedarse un render por detrás (ver arriba). */
+  const getCanvasSize = useCallback(() => canvasSizeRef.current, []);
 
   // ── Zoom ────────────────────────────────────────────────────────────
 
@@ -1179,6 +1216,7 @@ export function useCanvasState() {
     enhanceHeadline,
     composeEventOnCanvas,
     getCanvasForPage,
+    getCanvasSize,
     updateSelectedObject,
     applyTextStyle,
     clearTextStyle,

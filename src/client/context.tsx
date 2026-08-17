@@ -2,7 +2,7 @@ import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { Design, Template, Page } from "./types";
 import type { EventCopy } from "./lib/event-fields";
-import type { EventLayoutMode } from "./lib/event-template";
+import type { EventLayoutMode, EventTheme } from "./lib/event-template";
 import type * as fabric from "fabric";
 import type { BackgroundEffects, ScrimKind } from "./lib/effects";
 
@@ -70,9 +70,16 @@ export interface EditorContextValue {
     canvas: fabric.Canvas,
     pageId: string,
     copy: EventCopy,
-    opts: { pageWidth: number; pageHeight: number; mode?: EventLayoutMode; seal?: boolean }
+    opts: {
+      pageWidth: number;
+      pageHeight: number;
+      mode?: EventLayoutMode;
+      theme?: EventTheme;
+      seal?: boolean;
+    }
   ) => Promise<EventLayoutMode | null>;
   getCanvasForPage: (pageId: string) => fabric.Canvas | null;
+  getCanvasSize: () => { width: number; height: number };
   updateSelectedObject: (props: Record<string, unknown>) => void;
   /** Text formatting that respects a character selection — see lib/text-styles.ts. */
   applyTextStyle: (props: Record<string, unknown>) => void;
@@ -110,7 +117,9 @@ export interface EditorContextValue {
    *  página recién compuesta: si no se guardara, seguiría contando como "en blanco" y se
    *  recompondría en cada apertura, pisando lo que el operador hubiera editado. */
   scheduleSave: () => void;
-  publishToTwenty: (pngBlob: Blob) => Promise<string | undefined>;
+  /** Sube la imagen y devuelve su URL pública y el campo del registro donde se escribió
+   *  ("imagenEditada" o "imagenStory", según el formato del lienzo). */
+  publishToTwenty: (pngBlob: Blob) => Promise<{ url?: string; field?: string }>;
   deleteDesign: (id: string) => Promise<void>;
   renameDesign: (id: string, name: string) => Promise<void>;
   saving: boolean;

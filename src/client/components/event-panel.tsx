@@ -5,8 +5,10 @@ import { api } from "../api";
 import { buildEventCopy, type EventCopy } from "../lib/event-fields";
 import {
   currentLayoutMode,
+  currentTheme,
   hasEventTemplate,
   type EventLayoutMode,
+  type EventTheme,
 } from "../lib/event-template";
 import type { TwentyRecord } from "../types";
 
@@ -32,6 +34,21 @@ const MODES: { key: EventLayoutMode; label: string; hint: string }[] = [
   },
 ];
 
+const THEMES: { key: EventTheme; label: string; hint: string; swatch: string }[] = [
+  {
+    key: "light",
+    label: "Tinta clara",
+    hint: "Texto crema sobre foto oscura, con el ámbar de marca en la categoría y en la etiqueta de precio. Oscurece la foto para ganar contraste.",
+    swatch: "#fbf7f0",
+  },
+  {
+    key: "dark",
+    label: "Tinta oscura",
+    hint: "Texto azul noche sobre foto clara, con halo crema en vez de sombra. Aclara la foto en lugar de oscurecerla.",
+    swatch: "#0a2540",
+  },
+];
+
 export function EventPanel() {
   const {
     activeDesign,
@@ -46,6 +63,7 @@ export function EventPanel() {
 
   const [copy, setCopy] = useState<EventCopy | null>(null);
   const [mode, setMode] = useState<EventLayoutMode | null>(null);
+  const [theme, setTheme] = useState<EventTheme>("light");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,7 +90,10 @@ export function EventPanel() {
       });
     if (primaryPage) {
       const canvas = getCanvasForPage(primaryPage.id);
-      if (canvas) setMode(currentLayoutMode(canvas));
+      if (canvas) {
+        setMode(currentLayoutMode(canvas));
+        setTheme(currentTheme(canvas));
+      }
     }
     return () => {
       cancelled = true;
@@ -80,7 +101,7 @@ export function EventPanel() {
   }, [fetchCopy, primaryPage?.id]);
 
   const regenerate = useCallback(
-    async (forced?: EventLayoutMode) => {
+    async (forced?: EventLayoutMode, forcedTheme?: EventTheme) => {
       if (!primaryPage) return;
       const canvas = getCanvasForPage(primaryPage.id);
       if (!canvas) return;
@@ -98,12 +119,17 @@ export function EventPanel() {
         const fresh = await fetchCopy();
         if (!fresh) throw new Error("El registro no tiene nombre o no devuelve campos.");
         setCopy(fresh);
+        // Sin `forced`/`forcedTheme` se conserva lo que ya hubiera puesto: "Rehacer" trae
+        // los datos nuevos de Twenty, no devuelve el diseño a los valores por defecto.
+        const nextTheme = forcedTheme ?? theme;
         const applied = await composeEventOnCanvas(canvas, primaryPage.id, fresh, {
           pageWidth: canvasWidth,
           pageHeight: canvasHeight,
-          mode: forced,
+          mode: forced ?? mode ?? undefined,
+          theme: nextTheme,
         });
         setMode(applied);
+        setTheme(nextTheme);
         // La plantilla siempre se compone en la página principal, que no tiene por qué ser
         // la que el operador esté mirando — llevarle a ella para que vea el resultado.
         setActiveCanvas(primaryPage.id);
@@ -123,6 +149,8 @@ export function EventPanel() {
       canvasHeight,
       setActiveCanvas,
       scheduleSave,
+      mode,
+      theme,
     ]
   );
 
@@ -164,9 +192,32 @@ export function EventPanel() {
                 ? "bg-accent/20 border-accent text-accent"
                 : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
             }`}
-            onClick={() => regenerate(m.key)}
+            onClick={() => regenerate(m.key, undefined)}
           >
             {m.label}
+          </button>
+        ))}
+      </div>
+
+      <p class="text-zinc-400 text-[11px] font-semibold mb-1">Color del texto</p>
+      <div class="grid grid-cols-2 gap-1 mb-3">
+        {THEMES.map((t) => (
+          <button
+            key={t.key}
+            title={t.hint}
+            disabled={busy || !primaryPage}
+            class={`flex items-center justify-center gap-1.5 py-1.5 rounded-md border text-[10px] cursor-pointer transition-all disabled:opacity-50 ${
+              theme === t.key
+                ? "bg-accent/20 border-accent text-accent"
+                : "bg-transparent border-zinc-700 text-zinc-400 hover:text-zinc-50"
+            }`}
+            onClick={() => regenerate(undefined, t.key)}
+          >
+            <span
+              class="w-2.5 h-2.5 rounded-full border border-zinc-500 shrink-0"
+              style={{ background: t.swatch }}
+            />
+            {t.label}
           </button>
         ))}
       </div>

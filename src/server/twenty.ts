@@ -73,6 +73,22 @@ interface TwentyObjectDef {
   fieldsSelection?: string;
   /** Cómo convertir esos campos al payload plano que consume el cliente. */
   readFields?: (node: Record<string, any>) => Record<string, unknown>;
+  /**
+   * Campo Links donde se escribe la versión vertical (1080×1920). Opcional: News no tiene
+   * `imagenStory` en esta instancia —comprobado por MCP— y una historia suya cae al campo
+   * de siempre en vez de fallar.
+   */
+  storyImageField?: string;
+}
+
+/** Campo Links por defecto donde va la imagen exportada. */
+const FEED_IMAGE_FIELD = "imagenEditada";
+
+/** A qué campo del registro va la imagen, según el formato que se haya exportado. */
+export type ImageTarget = "feed" | "story";
+
+export function isImageTarget(value: unknown): value is ImageTarget {
+  return value === "feed" || value === "story";
 }
 
 /**
@@ -114,6 +130,7 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
       patrocinado
       descripcion { markdown }
     `,
+    storyImageField: "imagenStory",
     readFields: (node) => ({
       fechaDeInicio: blankToNull(node.fechaDeInicio),
       fechaDeFin: blankToNull(node.fechaDeFin),
@@ -168,20 +185,35 @@ export async function fetchRecord(type: TwentyObjectType, id: string): Promise<T
   };
 }
 
-/** Escribe la URL pública del PNG/JPEG exportado en el campo Links "Imagen Editada". */
+/**
+ * Escribe la URL pública de la imagen exportada en el campo Links que corresponda, y
+ * devuelve **cuál** ha sido.
+ *
+ * El formato vertical va a un campo distinto (`imagenStory`) porque es otra pieza, no otra
+ * versión de la misma: la historia y el post del feed se publican por separado. Si se pide
+ * el destino de historia para un objeto que no lo tiene, se cae al campo de siempre en vez
+ * de fallar — el que llama recibe el nombre real y puede decirlo, que es mejor que perder
+ * el trabajo por un campo que falta en el CRM.
+ */
 export async function setRecordEditedImage(
   type: TwentyObjectType,
   id: string,
   publicUrl: string,
-  label: string
-): Promise<void> {
+  label: string,
+  target: ImageTarget = "feed"
+): Promise<string> {
   const def = OBJECTS[type];
+  const field = (target === "story" && def.storyImageField) || FEED_IMAGE_FIELD;
   await twentyGraphQL(
+    // El nombre del campo se interpola en la query porque GraphQL no admite claves de
+    // `data` como variable. Sale de la tabla OBJECTS de este mismo fichero, nunca de la
+    // request, así que no hay forma de inyectar nada desde fuera.
     `mutation SetImagenEditada($id: UUID!, $url: String!, $label: String!) {
-      ${def.updateMutation}(id: $id, data: { imagenEditada: { primaryLinkUrl: $url, primaryLinkLabel: $label } }) {
+      ${def.updateMutation}(id: $id, data: { ${field}: { primaryLinkUrl: $url, primaryLinkLabel: $label } }) {
         id
       }
     }`,
     { id, url: publicUrl, label }
   );
+  return field;
 }

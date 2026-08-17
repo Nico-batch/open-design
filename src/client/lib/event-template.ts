@@ -1,6 +1,6 @@
 import * as fabric from "fabric";
 import type { EventCopy } from "./event-fields";
-import { applyBackgroundEffects, applyScrim, NO_EFFECTS } from "./effects";
+import { applyBackgroundEffects, applyScrim, NO_EFFECTS, type ScrimTone } from "./effects";
 import { findBackgroundImage, downscaleOversizedSource } from "./background";
 import { bringLogoToFront } from "./logo";
 import { syncCanvasFonts } from "./fonts";
@@ -35,7 +35,7 @@ import { syncCanvasFonts } from "./fonts";
 for (const klass of [fabric.Textbox, fabric.Rect, fabric.FabricImage] as unknown as Array<{
   customProperties?: string[];
 }>) {
-  klass.customProperties = [...(klass.customProperties ?? []), "_tplRole"];
+  klass.customProperties = [...(klass.customProperties ?? []), "_tplRole", "_tplTheme"];
 }
 
 export type TplRole =
@@ -113,14 +113,75 @@ export function clearEventTemplate(canvas: fabric.Canvas): void {
 // ── Paleta y medidas ────────────────────────────────────────────────
 
 /**
- * Un único color de acento, usado dos veces (categoría y píldora de precio). Ámbar cálido:
- * aguanta sobre foto clara y sobre foto oscura, que es más de lo que puede decirse del
- * añil de la interfaz, y no compite con el blanco del titular.
+ * Los dos temas, con la paleta de El Faro de Alicante: azul noche `#0a2540`, ámbar
+ * `#f4a825` y crema `#fbf7f0`.
+ *
+ * No son "el mismo diseño en otro color": lo que cambia es de qué lado está el contraste.
+ * Con tinta clara sobre una foto oscura, lo que separa el texto del fondo es una sombra
+ * **oscura**; con tinta oscura sobre una foto clara esa sombra desaparece y hace falta lo
+ * contrario, un halo claro. Y el velo tiene que ir en el mismo sentido, o el tema oscuro
+ * pintaría letras azul noche sobre una foto que acabamos de ennegrecer.
+ *
+ * El ámbar sobrevive en los dos, pero de forma distinta: como texto solo funciona sobre
+ * fondo oscuro (sobre crema se queda en ~2.5:1), así que en el tema oscuro se retira del
+ * rótulo de categoría y se queda donde sí rinde, la píldora — un bloque sólido con texto
+ * azul noche encima, que es un contraste holgado.
  */
-const ACCENT = "#ffc857";
-const ON_ACCENT = "#111114";
-const WHITE = "#ffffff";
-const MUTED = "rgba(255,255,255,0.82)";
+export type EventTheme = "light" | "dark";
+
+const NAVY = "#0a2540";
+const AMBER = "#f4a825";
+const CREAM = "#fbf7f0";
+
+interface Palette {
+  /** Titular, fecha: la tinta principal. */
+  ink: string;
+  /** Subtítulo y lugar: la misma tinta, con menos peso. */
+  inkMuted: string;
+  /** Rótulo de categoría. */
+  accent: string;
+  pillFill: string;
+  pillInk: string;
+  /** Color de la sombra/halo que despega el texto de la foto. */
+  shadow: string;
+  /** Un halo no lleva desplazamiento; una sombra proyectada sí. */
+  shadowOffset: boolean;
+  scrimTone: ScrimTone;
+}
+
+const THEMES: Record<EventTheme, Palette> = {
+  // Tinta clara para foto oscura.
+  light: {
+    ink: CREAM,
+    inkMuted: "rgba(251,247,240,0.84)",
+    accent: AMBER,
+    pillFill: AMBER,
+    pillInk: NAVY,
+    shadow: "rgba(10,37,64,0.55)",
+    shadowOffset: true,
+    scrimTone: "dark",
+  },
+  // Tinta oscura para foto clara.
+  dark: {
+    ink: NAVY,
+    inkMuted: "rgba(10,37,64,0.82)",
+    accent: NAVY,
+    pillFill: AMBER,
+    pillInk: NAVY,
+    // Halo crema en vez de sombra: sobre una foto clara, una sombra oscura ensucia el
+    // texto en lugar de separarlo.
+    shadow: "rgba(251,247,240,0.85)",
+    shadowOffset: false,
+    scrimTone: "light",
+  },
+};
+
+/** El tema con el que se compuso, leído del lienzo. Como el modo, se deduce en vez de
+ *  guardarse aparte — un estado menos que pueda desincronizarse de lo que se ve. */
+export function currentTheme(canvas: fabric.Canvas): EventTheme {
+  const marked = canvas.getObjects().find((o) => (o as any)._tplTheme);
+  return ((marked as any)?._tplTheme as EventTheme) ?? "light";
+}
 
 /** Todo en proporciones de la página, nunca en píxeles — el mismo criterio que `enhance.ts`,
  *  para que la receta valga igual en 1080×1080, 1080×1350 y 1080×1920. */
@@ -132,7 +193,8 @@ const M = {
   dateOfPage: 1 / 26,
   placeOfPage: 1 / 32,
   categoryOfPage: 1 / 34,
-  priceOfPage: 1 / 32,
+  // Más pequeño que el lugar a propósito: es una etiqueta, no una línea de texto.
+  priceOfPage: 1 / 40,
 };
 
 /** Hasta dónde puede encoger el titular antes de que se prefiera descartar otro bloque. */
@@ -183,114 +245,140 @@ function makeText(
   return box;
 }
 
-/** La sombra que ya usa el titular de noticias (`enhance.ts`), en proporción al cuerpo:
- *  es lo que separa el texto de la foto sin recurrir a un contorno grueso. */
-function textShadow(fontSize: number, strength = 1): fabric.Shadow {
+/** Separación y orden de sacrificio de cada bloque, en una tabla y no repartidos por el
+ *  constructor, porque el re-apilado tras un cambio de tamaño los necesita otra vez. */
+const BLOCK_META: Record<string, { gapBefore: number; dropPriority: number }> = {
+  category: { gapBefore: 0, dropPriority: 1 },
+  title: { gapBefore: 0.45, dropPriority: 0 },
+  subtitle: { gapBefore: 0.55, dropPriority: 3 },
+  date: { gapBefore: 0.8, dropPriority: 0 },
+  place: { gapBefore: 0.35, dropPriority: 2 },
+  price: { gapBefore: 0.9, dropPriority: 2 },
+};
+
+/** Orden vertical del bloque de datos, idéntico en los dos modos. */
+const BLOCK_ORDER: TplRole[] = ["category", "title", "subtitle", "date", "place", "price"];
+
+/**
+ * Lo que separa el texto de la foto sin recurrir a un contorno grueso — el mismo criterio
+ * que el titular de noticias (`enhance.ts`), pero en el sentido que pida el tema: sombra
+ * proyectada bajo la tinta clara, halo sin desplazamiento bajo la tinta oscura.
+ */
+function textShadow(fontSize: number, theme: EventTheme, strength = 1): fabric.Shadow {
+  const p = THEMES[theme];
+  const offset = p.shadowOffset ? Math.round(fontSize * 0.05) : 0;
   return new fabric.Shadow({
-    color: `rgba(0,0,0,${0.55 * strength})`,
-    blur: Math.round(fontSize * 0.16),
-    offsetX: Math.round(fontSize * 0.04),
-    offsetY: Math.round(fontSize * 0.05),
+    color: strength === 1 ? p.shadow : fadeColor(p.shadow, strength),
+    // El halo necesita más difuminado que la sombra para leerse como tal y no como un borde.
+    blur: Math.round(fontSize * (p.shadowOffset ? 0.16 : 0.24)),
+    offsetX: p.shadowOffset ? Math.round(fontSize * 0.04) : 0,
+    offsetY: offset,
     affectStroke: true,
   });
 }
 
-function buildBlocks(copy: EventCopy, pageWidth: number, mode: EventLayoutMode): Block[] {
+/** Baja el alfa de un `rgba(...)` de la paleta sin tener que declarar cada variante. */
+function fadeColor(rgba: string, factor: number): string {
+  return rgba.replace(/([\d.]+)\s*\)$/, (_, a) => `${(parseFloat(a) * factor).toFixed(3)})`);
+}
+
+function buildBlocks(
+  copy: EventCopy,
+  pageWidth: number,
+  mode: EventLayoutMode,
+  theme: EventTheme
+): Block[] {
   const width = Math.round(pageWidth * M.blockWidth);
+  const p = THEMES[theme];
   const blocks: Block[] = [];
+  const push = (role: TplRole, obj: fabric.FabricObject, backdrop?: fabric.Rect) => {
+    (obj as any)._tplTheme = theme;
+    if (backdrop) (backdrop as any)._tplTheme = theme;
+    blocks.push({ role, obj, backdrop, ...BLOCK_META[role] });
+  };
 
   if (copy.categoria) {
     const fontSize = Math.round(pageWidth * M.categoryOfPage);
-    blocks.push({
-      role: "category",
-      dropPriority: 1,
-      gapBefore: 0,
-      obj: makeText(copy.categoria.toUpperCase(), "category", {
+    push(
+      "category",
+      makeText(copy.categoria.toUpperCase(), "category", {
         fontSize,
         fontFamily: "Montserrat",
         fontWeight: "700",
-        fill: ACCENT,
+        fill: p.accent,
         width,
         // Muy abierto: una sola palabra corta en mayúsculas necesita el tracking para
         // leerse como un rótulo y no como una palabra suelta perdida sobre la foto.
         charSpacing: 160,
-        shadow: textShadow(fontSize),
-      }),
-    });
+        shadow: textShadow(fontSize, theme),
+      })
+    );
   }
 
   {
     const fontSize = Math.round(pageWidth * M.titleOfPage[mode]);
-    blocks.push({
-      role: "title",
-      dropPriority: 0,
-      gapBefore: 0.45,
-      obj: makeText(copy.titulo.toUpperCase(), "title", {
+    push(
+      "title",
+      makeText(copy.titulo.toUpperCase(), "title", {
         fontSize,
         fontFamily: "Montserrat",
         // 800 viene en public/fonts/Montserrat: es la ExtraBold de verdad, no una negrita
         // sintética — el mismo peso que usa "Mejorar titular".
         fontWeight: "800",
-        fill: WHITE,
+        fill: p.ink,
         width,
         charSpacing: -20,
         lineHeight: 1.02,
-        shadow: textShadow(fontSize),
-      }),
-    });
+        shadow: textShadow(fontSize, theme),
+      })
+    );
   }
 
   if (copy.subtitulo) {
     const fontSize = Math.round(pageWidth * M.subtitleOfPage);
-    blocks.push({
-      role: "subtitle",
-      dropPriority: 3,
-      gapBefore: 0.55,
-      obj: makeText(copy.subtitulo, "subtitle", {
+    push(
+      "subtitle",
+      makeText(copy.subtitulo, "subtitle", {
         fontSize,
         fontFamily: "Inter",
         fontWeight: "400",
-        fill: MUTED,
+        fill: p.inkMuted,
         width,
         lineHeight: 1.25,
-        shadow: textShadow(fontSize, 0.8),
-      }),
-    });
+        shadow: textShadow(fontSize, theme, 0.8),
+      })
+    );
   }
 
   if (copy.fecha) {
     const fontSize = Math.round(pageWidth * M.dateOfPage);
-    blocks.push({
-      role: "date",
-      dropPriority: 0,
-      gapBefore: 0.8,
-      obj: makeText(copy.fecha, "date", {
+    push(
+      "date",
+      makeText(copy.fecha, "date", {
         fontSize,
         fontFamily: "Montserrat",
         fontWeight: "700",
-        fill: WHITE,
+        fill: p.ink,
         width,
         charSpacing: 20,
-        shadow: textShadow(fontSize),
-      }),
-    });
+        shadow: textShadow(fontSize, theme),
+      })
+    );
   }
 
   if (copy.lugar) {
     const fontSize = Math.round(pageWidth * M.placeOfPage);
-    blocks.push({
-      role: "place",
-      dropPriority: 2,
-      gapBefore: 0.35,
-      obj: makeText(copy.lugar, "place", {
+    push(
+      "place",
+      makeText(copy.lugar, "place", {
         fontSize,
         fontFamily: "Inter",
         fontWeight: "500",
-        fill: MUTED,
+        fill: p.inkMuted,
         width,
-        shadow: textShadow(fontSize, 0.8),
-      }),
-    });
+        shadow: textShadow(fontSize, theme, 0.8),
+      })
+    );
   }
 
   if (copy.precio) {
@@ -299,7 +387,7 @@ function buildBlocks(copy: EventCopy, pageWidth: number, mode: EventLayoutMode):
       fontSize,
       fontFamily: "Montserrat",
       fontWeight: "800",
-      fill: ON_ACCENT,
+      fill: p.pillInk,
       width,
       charSpacing: 100,
     });
@@ -309,13 +397,13 @@ function buildBlocks(copy: EventCopy, pageWidth: number, mode: EventLayoutMode):
     // para editar el texto. El rectángulo no recibe eventos, igual que el velo, para que
     // el clic llegue al texto que hay encima.
     const backdrop = new fabric.Rect({
-      fill: ACCENT,
+      fill: p.pillFill,
       selectable: false,
       evented: false,
       hoverCursor: "default",
     });
     (backdrop as any)._tplRole = "priceBg";
-    blocks.push({ role: "price", obj: text, backdrop, dropPriority: 2, gapBefore: 0.9 });
+    push("price", text, backdrop);
   }
 
   return blocks;
@@ -438,8 +526,14 @@ function stackBlocks(
         scaleY: 1,
       });
       b.backdrop.setCoords();
-      // Justo debajo de su texto, pase lo que pase con el orden de inserción.
-      canvas.moveObjectTo(b.backdrop, canvas.getObjects().indexOf(b.obj));
+      // Justo debajo de su texto, sin depender de en qué posición estuviera cada uno.
+      // Calcularlo con `indexOf` fallaba al re-apilar: tras un `loadFromJSON` el par ya
+      // venía colocado, y mover el rectángulo a la posición del texto lo dejaba *encima*,
+      // tapando la palabra. Subir los dos al frente en orden es exacto en ambos casos —
+      // los bloques no se solapan entre sí, así que estar arriba no molesta a nadie, y el
+      // logo se recoloca al final de todos modos.
+      canvas.bringObjectToFront(b.backdrop);
+      canvas.bringObjectToFront(b.obj);
     }
 
     y += h;
@@ -514,16 +608,25 @@ function applyModeBackground(
   canvas: fabric.Canvas,
   mode: EventLayoutMode,
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  theme: EventTheme
 ): void {
+  const tone = THEMES[theme].scrimTone;
+  // El brillo va en el sentido del tema: la tinta oscura necesita que la foto se aclare,
+  // no que se apague, o el velo claro tendría que pelearse con ella.
+  const lift = theme === "dark" ? 0.12 : -0.3;
   if (mode === "poster") {
-    applyBackgroundEffects(canvas, { blur: 0.3, brightness: -0.3, contrast: 0, sharpen: 0 });
-    applyScrim(canvas, pageWidth, pageHeight, "solid", 0.25);
+    applyBackgroundEffects(canvas, { blur: 0.3, brightness: lift, contrast: 0, sharpen: 0 });
+    applyScrim(canvas, pageWidth, pageHeight, "solid", 0.25, tone);
   } else {
-    applyBackgroundEffects(canvas, { ...NO_EFFECTS, contrast: 0.08, brightness: -0.05 });
-    // Degradado en vez de velo uniforme: aquí el texto va abajo, así que oscurecer la foto
+    applyBackgroundEffects(canvas, {
+      ...NO_EFFECTS,
+      contrast: 0.08,
+      brightness: theme === "dark" ? 0.06 : -0.05,
+    });
+    // Degradado en vez de velo uniforme: aquí el texto va abajo, así que tratar la foto
     // entera apagaría justo la parte que se quiere enseñar.
-    applyScrim(canvas, pageWidth, pageHeight, "bottom", 0.8);
+    applyScrim(canvas, pageWidth, pageHeight, "bottom", 0.8, tone);
   }
 }
 
@@ -532,6 +635,8 @@ export interface ComposeOptions {
   pageHeight: number;
   /** Fuerza el modo. Si falta, se decide por la proporción de la imagen de fondo. */
   mode?: EventLayoutMode;
+  /** Tinta clara (para foto oscura) u oscura (para foto clara). Por defecto, clara. */
+  theme?: EventTheme;
 }
 
 /**
@@ -546,21 +651,22 @@ export async function composeEventTemplate(
   opts: ComposeOptions
 ): Promise<EventLayoutMode> {
   const { pageWidth, pageHeight } = opts;
+  const theme = opts.theme ?? "light";
   clearEventTemplate(canvas);
 
   const bg = findBackgroundImage(canvas);
   const mode = opts.mode ?? (bg ? chooseLayoutMode(bg, pageWidth, pageHeight) : "bleed");
 
   if (bg) {
-    applyModeBackground(canvas, mode, pageWidth, pageHeight);
+    applyModeBackground(canvas, mode, pageWidth, pageHeight, theme);
   } else {
-    // Sin foto no hay nada que oscurecer, y el lienzo nace blanco (`page-canvas.tsx`):
-    // texto blanco sobre blanco sería un post en blanco. Un fondo oscuro deja la plantilla
-    // legible y se ve enseguida que falta la imagen.
-    canvas.backgroundColor = "#111114";
+    // Sin foto no hay nada que velar, y el lienzo nace blanco (`page-canvas.tsx`): con el
+    // tema claro sería texto crema sobre blanco, o sea un post en blanco. Se pone el color
+    // de marca contrario al de la tinta, que además deja ver enseguida que falta la foto.
+    canvas.backgroundColor = theme === "dark" ? CREAM : NAVY;
   }
 
-  const blocks = buildBlocks(copy, pageWidth, mode);
+  const blocks = buildBlocks(copy, pageWidth, mode, theme);
   for (const b of blocks) {
     if (b.backdrop) canvas.add(b.backdrop);
     canvas.add(b.obj);
@@ -589,6 +695,58 @@ export async function composeEventTemplate(
   bringLogoToFront(canvas);
   canvas.requestRenderAll();
   return mode;
+}
+
+/**
+ * Re-apila la plantilla ya existente para un tamaño de página nuevo, sin volver a pedir
+ * nada a Twenty ni tocar los textos.
+ *
+ * Es lo que hace que cambiar de cuadrado a vertical u historia "adapte" el diseño en vez
+ * de dejar los bloques anclados al borde inferior de la página anterior. Los cuerpos de
+ * letra van en proporción al **ancho**, y los tres presets miden 1080 de ancho, así que lo
+ * único que cambia de verdad es el anclaje vertical y cuánto sitio hay.
+ *
+ * El titular sí se devuelve a su cuerpo nominal antes de re-ajustarlo: `fitToLines` solo
+ * sabe encoger, de modo que sin este reinicio cada cambio de tamaño lo dejaría un poco más
+ * pequeño que el anterior, sin vuelta atrás.
+ */
+export function relayoutEventTemplate(
+  canvas: fabric.Canvas,
+  pageWidth: number,
+  pageHeight: number
+): boolean {
+  const byRole = new Map<string, fabric.FabricObject>();
+  for (const o of canvas.getObjects()) {
+    const role = tplRole(o);
+    if (role) byRole.set(role, o);
+  }
+  if (!byRole.has("title")) return false;
+
+  const mode: EventLayoutMode = byRole.has("poster") ? "poster" : "bleed";
+
+  const blocks: Block[] = [];
+  for (const role of BLOCK_ORDER) {
+    const obj = byRole.get(role);
+    if (!obj) continue;
+    blocks.push({
+      role,
+      obj,
+      backdrop: role === "price" ? (byRole.get("priceBg") as fabric.Rect | undefined) : undefined,
+      ...BLOCK_META[role],
+    });
+  }
+
+  const title = byRole.get("title") as fabric.Textbox | undefined;
+  if (title) title.set({ fontSize: Math.round(pageWidth * M.titleOfPage[mode]) });
+
+  const stack = stackBlocks(blocks, canvas, pageWidth, pageHeight, mode);
+
+  const poster = byRole.get("poster") as fabric.FabricImage | undefined;
+  if (poster) fitPoster(poster, pageWidth, stack.top);
+
+  bringLogoToFront(canvas);
+  canvas.requestRenderAll();
+  return true;
 }
 
 /**

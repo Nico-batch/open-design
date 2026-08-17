@@ -6,6 +6,8 @@ import {
   setRecordEditedImage,
   isTwentyObjectType,
   type TwentyObjectType,
+  isImageTarget,
+  type ImageTarget,
 } from "./twenty.js";
 import { editorAuth } from "./auth.js";
 
@@ -617,6 +619,10 @@ app.post("/api/twenty/:type/:id/publish-image", async (c) => {
   console.log(`[publish-image ${objectType}/${id}] inicio`);
 
   let file: File;
+  // Qué campo del registro recibe la URL. Lo decide el cliente a partir del formato del
+  // lienzo (una historia 9:16 va a "Imagen Story"); un valor ausente o desconocido cae al
+  // destino de siempre en vez de rechazar la subida.
+  let target: ImageTarget = "feed";
   try {
     const body = await c.req.parseBody();
     const parsed = body["file"];
@@ -625,6 +631,7 @@ app.post("/api/twenty/:type/:id/publish-image", async (c) => {
       return c.json({ error: "No file provided" }, 400);
     }
     file = parsed;
+    if (isImageTarget(body["target"])) target = body["target"];
   } catch (e) {
     console.error(`[publish-image ${objectType}/${id}] fallo al parsear el multipart:`, e);
     return c.json({ error: "No se pudo leer la imagen enviada" }, 400);
@@ -662,15 +669,24 @@ app.post("/api/twenty/:type/:id/publish-image", async (c) => {
     return c.json({ error: "No se pudo guardar la imagen en el servidor" }, 500);
   }
 
+  let field: string;
   try {
-    await setRecordEditedImage(objectType, id, publicUrl, "Imagen editada (Open Design)");
+    field = await setRecordEditedImage(
+      objectType,
+      id,
+      publicUrl,
+      target === "story" ? "Imagen story (Open Design)" : "Imagen editada (Open Design)",
+      target
+    );
   } catch (e) {
     console.error(`[publish-image ${objectType}/${id}] fallo al actualizar Twenty:`, e);
     return c.json({ error: e instanceof Error ? e.message : "Twenty update failed" }, 502);
   }
 
-  console.log(`[publish-image ${objectType}/${id}] OK`);
-  return c.json({ url: publicUrl }, 200);
+  console.log(`[publish-image ${objectType}/${id}] OK → ${field}`);
+  // El campo se devuelve para que el editor pueda decir dónde ha escrito: si se pidió
+  // "story" sobre un objeto que no lo tiene, aquí llega el de siempre.
+  return c.json({ url: publicUrl, field }, 200);
 });
 
 export default app;

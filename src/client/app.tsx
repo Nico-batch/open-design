@@ -9,7 +9,7 @@ import { useEffect, useRef } from "preact/hooks";
 export function App() {
   const { path, navigate, designId, recordId, objectType } = useRouter();
   const canvasState = useCanvasState();
-  const designState = useDesigns(canvasState.getCanvasJSONForPage);
+  const designState = useDesigns(canvasState.getCanvasJSONForPage, canvasState.getCanvasSize);
   const openedRecordIdRef = useRef<string | null>(null);
 
   // Load design from URL on initial load and when designId changes

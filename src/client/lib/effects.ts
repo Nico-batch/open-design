@@ -4,7 +4,7 @@ import { findBackgroundImage } from "./background";
 // Same reason as the background marker (see background.ts): Fabric drops properties it
 // doesn't know about when serializing, so the scrim has to declare its own or it would
 // come back from a save as an anonymous black rectangle nobody can identify or remove.
-fabric.Rect.customProperties = ["_isScrim", "_scrimKind"];
+fabric.Rect.customProperties = ["_isScrim", "_scrimKind", "_scrimTone"];
 
 /**
  * How the darkening layer ("scrim") is shaped. Putting text straight onto a photo is the
@@ -17,6 +17,15 @@ fabric.Rect.customProperties = ["_isScrim", "_scrimKind"];
  *  - `top`    — the same, mirrored, for text at the top.
  */
 export type ScrimKind = "none" | "solid" | "bottom" | "top";
+
+/**
+ * De qué color es el velo.
+ *
+ * Oscurecer solo sirve para texto claro. Con tinta oscura encima —el tema pensado para
+ * fotos claras— hace falta lo contrario: un velo del color crema de la marca que apague
+ * la foto *hacia arriba* y deje respirar al texto negro azulado.
+ */
+export type ScrimTone = "dark" | "light";
 
 export interface BackgroundEffects {
   /** Fabric's Blur filter, 0–1 (a fraction of the image size, not pixels). */
@@ -122,8 +131,18 @@ export function applyBackgroundEffects(canvas: fabric.Canvas, effects: Backgroun
   return true;
 }
 
-function scrimFill(kind: ScrimKind, opacity: number, width: number, height: number): string | fabric.Gradient<"linear"> {
-  const dark = (a: number) => `rgba(0,0,0,${a})`;
+/** Crema de la marca (#fbf7f0) para el velo claro; negro puro para el oscuro. */
+const SCRIM_RGB: Record<ScrimTone, string> = { dark: "0,0,0", light: "251,247,240" };
+
+function scrimFill(
+  kind: ScrimKind,
+  opacity: number,
+  width: number,
+  height: number,
+  tone: ScrimTone = "dark"
+): string | fabric.Gradient<"linear"> {
+  const rgb = SCRIM_RGB[tone] ?? SCRIM_RGB.dark;
+  const dark = (a: number) => `rgba(${rgb},${a})`;
   if (kind === "solid") return dark(opacity);
 
   // Gradient stops carry the alpha themselves, so the object's own opacity stays at 1 and
@@ -160,7 +179,8 @@ export function applyScrim(
   pageWidth: number,
   pageHeight: number,
   kind: ScrimKind,
-  opacity: number
+  opacity: number,
+  tone: ScrimTone = "dark"
 ): void {
   const existing = findScrim(canvas);
 
@@ -172,7 +192,7 @@ export function applyScrim(
     return;
   }
 
-  const fill = scrimFill(kind, opacity, pageWidth, pageHeight);
+  const fill = scrimFill(kind, opacity, pageWidth, pageHeight, tone);
   const rect =
     existing ??
     new fabric.Rect({
@@ -184,6 +204,7 @@ export function applyScrim(
   rect.set({ left: 0, top: 0, width: pageWidth, height: pageHeight, scaleX: 1, scaleY: 1, fill });
   (rect as any)._isScrim = true;
   (rect as any)._scrimKind = kind;
+  (rect as any)._scrimTone = tone;
   rect.setCoords();
 
   if (!existing) canvas.add(rect);
@@ -198,10 +219,15 @@ export function applyScrim(
 }
 
 /** Current scrim settings, for restoring the panel's state from a loaded design. */
-export function readScrim(canvas: fabric.Canvas): { kind: ScrimKind; opacity: number } {
+export function readScrim(canvas: fabric.Canvas): {
+  kind: ScrimKind;
+  opacity: number;
+  tone: ScrimTone;
+} {
   const scrim = findScrim(canvas);
-  if (!scrim) return { kind: "none", opacity: 0.4 };
+  if (!scrim) return { kind: "none", opacity: 0.4, tone: "dark" };
   const kind = ((scrim as any)._scrimKind as ScrimKind) ?? "solid";
+  const tone = ((scrim as any)._scrimTone as ScrimTone) ?? "dark";
   const fill = scrim.fill;
   let opacity = 0.4;
   if (typeof fill === "string") {
@@ -216,14 +242,13 @@ export function readScrim(canvas: fabric.Canvas): { kind: ScrimKind; opacity: nu
       .reduce((a, b) => Math.max(a, b), 0);
     if (strongest > 0) opacity = strongest;
   }
-  return { kind, opacity };
+  return { kind, opacity, tone };
 }
 
 /** Keeps the scrim covering the page after a canvas resize. */
 export function resizeScrim(canvas: fabric.Canvas, pageWidth: number, pageHeight: number): void {
   const scrim = findScrim(canvas);
   if (!scrim) return;
-  const kind = ((scrim as any)._scrimKind as ScrimKind) ?? "solid";
-  const { opacity } = readScrim(canvas);
-  applyScrim(canvas, pageWidth, pageHeight, kind, opacity);
+  const { kind, opacity, tone } = readScrim(canvas);
+  applyScrim(canvas, pageWidth, pageHeight, kind, opacity, tone);
 }

@@ -1634,6 +1634,106 @@ sería un tercer modo «solo cartel» que dejara únicamente la franja de datos 
 da (o ninguna).
 
 
+### 9.27 Los tres formatos, los dos temas de marca y el campo Imagen Story
+
+Cuatro cambios pedidos sobre la plantilla de §9.26: que los tres presets de tamaño sean
+utilizables de verdad, que el formato vertical vaya a su propio campo del CRM, que haya dos
+temas de color con la paleta de la marca, y que la etiqueta de precio sea más pequeña.
+
+#### La plantilla se re-apila al cambiar de tamaño
+
+`relayoutEventTemplate` (en `event-template.ts`) recoloca los bloques que ya existen contra
+el nuevo borde inferior, sin volver a pedir nada a Twenty ni tocar los textos. Los cuerpos
+de letra van en proporción al **ancho** y los tres presets miden 1080 de ancho, así que lo
+único que cambia de verdad es el anclaje vertical y cuánto sitio hay.
+
+El titular se devuelve a su cuerpo nominal antes de re-ajustarlo: `fitToLines` solo sabe
+encoger, así que sin ese reinicio cada cambio de tamaño lo dejaría un poco más pequeño que
+el anterior, sin vuelta atrás.
+
+`setCanvasSize` (`use-canvas.ts`) hace además dos cosas que antes no hacía: **reencaja el
+fondo** —estaba ajustado contra la página anterior, y al pasar de cuadrado a historia se
+quedaría cubriendo poco más de la mitad— y llama a este re-apilado.
+
+#### Dos bugs que solo aparecieron al probarlo
+
+- **El tamaño no se persistía.** `saveDesign` solo mandaba `canvas_json`; el `width`/`height`
+  del diseño no se actualizaba nunca, así que al recargar volvía el formato original con la
+  maqueta del nuevo. Ahora `useDesigns` recibe un `getCanvasSize` y lo envía (el endpoint
+  `PUT /api/designs/:id` ya aceptaba ambos campos).
+  **Y ese getter tiene que leer de un ref, no del estado**: lo consume el guardado
+  *diferido*, de modo que quien llama a `scheduleSave()` justo después de cambiar de tamaño
+  estaría usando todavía el callback del render anterior — a los 2 s se guardaba el tamaño
+  viejo. Es el mismo tipo de fallo que §9.26 arregló en `page-canvas.tsx`, por otra puerta.
+- **La píldora de precio se colocaba encima de su texto al re-apilar.** El z-order se
+  calculaba con `moveObjectTo(backdrop, indexOf(texto))`, que funciona cuando el par se
+  acaba de insertar pero no cuando ya venía colocado de un `loadFromJSON`: ahí dejaba el
+  rectángulo tapando la palabra. Ahora se suben los dos al frente en orden, que es exacto en
+  ambos casos (los bloques no se solapan entre sí, y el logo se recoloca al final).
+
+#### El formato vertical va a "Imagen Story"
+
+Comprobado por MCP: `eventCustom` tiene `imagenStory` además de `imagenEditada`; **`news`
+no lo tiene**. Así que `TwentyObjectDef` gana un `storyImageField` opcional y
+`setRecordEditedImage` recibe un `target` (`"feed" | "story"`) y **devuelve el campo que ha
+escrito**. Si se pide historia sobre un objeto que no la tiene, cae al campo de siempre en
+lugar de fallar — perder el trabajo por un campo que falta en el CRM sería peor.
+
+El cliente decide el destino por la proporción del lienzo (`height >= width * 1.7`), que
+separa con holgura los tres presets: 1080×1920 da 1.78 y el siguiente más alto, 1080×1350,
+se queda en 1.25. El toolbar muestra en qué campo ha escrito, porque con tres formatos
+disponibles esa es la única señal que distingue una subida correcta de haber exportado el
+formato equivocado.
+
+#### Dos temas con la paleta de El Faro
+
+Azul noche `#0a2540`, ámbar `#f4a825` y crema `#fbf7f0`.
+
+|  | tinta clara (foto oscura) | tinta oscura (foto clara) |
+|---|---|---|
+| titular, fecha | crema | azul noche |
+| categoría | ámbar | azul noche |
+| píldora | ámbar sobre azul noche | ámbar sobre azul noche |
+| separación del fondo | sombra azul noche, desplazada | halo crema, sin desplazar |
+| velo | oscuro | claro |
+| brillo del fondo | se oscurece | se aclara |
+
+No son "el mismo diseño en otro color": lo que cambia es de qué lado está el contraste. Con
+tinta oscura, la sombra que separa el texto de la foto desaparece y hace falta lo contrario,
+un halo claro; y el velo tiene que ir en el mismo sentido, o el tema oscuro pintaría letras
+azul noche sobre una foto que acabamos de ennegrecer. Por eso `applyScrim` acepta ahora un
+**tono** (`ScrimTone`, con `_scrimTone` registrado en `customProperties`) y `setScrim`
+conserva el que hubiera puesto el tema: tocar la intensidad del velo desde el panel Bg no
+debe devolverlo a oscuro y arruinar un diseño de tinta oscura.
+
+El ámbar sobrevive en los dos temas pero de forma distinta: como **texto** solo funciona
+sobre fondo oscuro (sobre crema se queda en ~2.5:1), así que en el tema oscuro se retira del
+rótulo de categoría y se queda donde sí rinde, la píldora — un bloque sólido con texto azul
+noche encima, que es un contraste holgado.
+
+Como el modo, el tema se **deduce** del lienzo (`_tplTheme`) en vez de guardarse aparte.
+
+#### Verificado contra el build de producción
+
+`:8788` con CSP real, con Playwright y leyendo tanto el `canvas_json` persistido como el
+registro en Twenty:
+
+- Los tres formatos: 1080×1350 → 1080×1920 → 1080×1080, con el **margen inferior exacto de
+  80 px en los tres** y cero solapes; el tamaño persiste en el diseño y el orden del stack
+  se mantiene `… → priceBg → price`.
+- Los dos temas: colores, dirección de la sombra (`offsetY 5` con sombra azul noche frente a
+  `offsetY 0` con halo crema) y tono del velo (`rgba(0,0,0,.8)` frente a
+  `rgba(251,247,240,.8)`) cambian los dos a la vez.
+- Destino de publicación contra el Twenty real: 1080×1920 escribe en **`imagenStory`** y
+  1080×1350 en **`imagenEditada`**, confirmado leyendo el registro de vuelta. Las dos
+  escrituras de prueba revertidas a vacío después.
+- Precio a 27 px (antes 34), sin errores de consola en ningún paso.
+
+**Anotado, no implementado:** el objeto tiene también un campo `subtitulo`, vacío en los 99
+registros. Si algún día se rellena, debería ganar a la primera frase de `descripcion` en
+`buildEventCopy` — es una línea, pero hoy no cambiaría nada.
+
+
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
 Cubre el checklist de `PLAN.md` §5/§6 que depende solo del código de la app (no del

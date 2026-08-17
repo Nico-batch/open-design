@@ -3,7 +3,13 @@ import type { Design, DesignWithPages, Template, Page } from "../types";
 import { api } from "../api";
 import { coerceTwentyObjectType, type TwentyObjectType } from "../lib/twenty";
 
-export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
+export function useDesigns(
+  getCanvasJSONForPage: (pageId: string) => string,
+  /** Tamaño actual del lienzo. Se guarda con el diseño porque cambiarlo desde el
+   *  desplegable del toolbar no se persistía: al recargar, la página volvía al tamaño
+   *  original y la plantilla —maquetada para el nuevo— quedaba descolocada. */
+  getCanvasSize: () => { width: number; height: number }
+) {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [activeDesign, setActiveDesign] = useState<Design | null>(null);
@@ -55,8 +61,11 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
       }
       // Also update design's canvas_json with first page for backwards compat
       const firstPageJson = currentPages.length > 0 ? getCanvasJSONForPage(currentPages[0].id) : "{}";
+      const size = getCanvasSize();
       const updated = await api<Design>("PUT", `/api/designs/${activeIdRef.current}`, {
         canvas_json: firstPageJson,
+        width: size.width,
+        height: size.height,
       });
       setDesigns((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
       setActiveDesign(updated);
@@ -65,19 +74,26 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
     } finally {
       setSaving(false);
     }
-  }, [getCanvasJSONForPage, pages]);
+  }, [getCanvasJSONForPage, getCanvasSize, pages]);
 
   // Uploads the exported image and writes its public URL into the linked Twenty record's
   // "Imagen Editada" field — the record can be a News or an Events one, so the object
   // type saved on the design decides which object gets updated. Does not save the design
   // or publish to social media — those are separate, unrelated steps.
   const publishToTwenty = useCallback(
-    async (pngBlob: Blob): Promise<string | undefined> => {
+    async (pngBlob: Blob): Promise<{ url?: string; field?: string }> => {
       const recordId = activeDesign?.twenty_record_id;
       if (!recordId) throw new Error("Este diseño no está vinculado a ningún registro de Twenty");
       const objectType = coerceTwentyObjectType(activeDesign?.twenty_object_type);
+      // El formato decide a qué campo del registro va la URL: el vertical 9:16 es una
+      // historia y tiene el suyo propio ("Imagen Story"). El umbral separa con holgura los
+      // tres presets: 1080×1920 da 1.78 y el siguiente más alto, 1080×1350, se queda en
+      // 1.25.
+      const { width, height } = getCanvasSize();
+      const target = height >= width * 1.7 ? "story" : "feed";
       const form = new FormData();
       form.append("file", pngBlob, "design.png");
+      form.append("target", target);
       let resp: Response;
       try {
         resp = await fetch(`/api/twenty/${objectType}/${recordId}/publish-image`, {
@@ -92,7 +108,7 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
       }
       // Some failure responses (e.g. 401 from Basic Auth) aren't JSON — don't let a
       // parse error on those mask the real status.
-      let data: { error?: string; url?: string } = {};
+      let data: { error?: string; url?: string; field?: string } = {};
       try {
         data = await resp.json();
       } catch {
@@ -102,9 +118,9 @@ export function useDesigns(getCanvasJSONForPage: (pageId: string) => string) {
         if (resp.status === 401) throw new Error("Sesión expirada o credenciales inválidas — recarga la página e inicia sesión de nuevo.");
         throw new Error(data.error || `No se pudo publicar en Twenty (error ${resp.status})`);
       }
-      return data.url;
+      return { url: data.url, field: data.field };
     },
-    [activeDesign]
+    [activeDesign, getCanvasSize]
   );
 
   // Creating a design only returns the design row (no pages, even though the server
