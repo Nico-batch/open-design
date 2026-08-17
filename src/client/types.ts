@@ -30,6 +30,8 @@ export interface TwentyRecord {
  * aquí "no hay dato" es siempre `null` y nunca `""`.
  */
 export interface EventFields {
+  /** Subtítulo escrito a mano en el CRM. Manda sobre cualquier otra fuente. */
+  subtitulo: string | null;
   /** ISO 8601 en UTC — hay que formatearlo en Europe/Madrid (ver lib/event-fields.ts). */
   fechaDeInicio: string | null;
   fechaDeFin: string | null;

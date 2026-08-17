@@ -1729,9 +1729,14 @@ registro en Twenty:
   escrituras de prueba revertidas a vacío después.
 - Precio a 27 px (antes 34), sin errores de consola en ningún paso.
 
-**Anotado, no implementado:** el objeto tiene también un campo `subtitulo`, vacío en los 99
-registros. Si algún día se rellena, debería ganar a la primera frase de `descripcion` en
-`buildEventCopy` — es una línea, pero hoy no cambiaría nada.
+**El campo `subtitulo` manda sobre el resto.** El subtítulo sale ahora de tres fuentes, en
+orden de cuánto se ha decidido cada una a propósito: el campo `subtitulo` del CRM (que
+alguien escribe justo para esto), lo que venga detrás del separador en el propio nombre, y
+por último la primera frase de `descripcion`, la única que no se redactó pensando en el
+post. Estaba vacío en los 99 registros al añadirlo, así que hasta que se rellene el
+comportamiento es idéntico. Ojo con una consecuencia: cuando el campo está relleno, el
+trozo que el nombre llevara detrás del separador se pierde, porque el titular ya se ha
+quedado solo con la parte de delante.
 
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)

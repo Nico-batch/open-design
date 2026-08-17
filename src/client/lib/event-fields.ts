@@ -258,9 +258,16 @@ export function buildEventCopy(fields: EventFields, name: string): EventCopy {
   return {
     categoria: fields.categoria ? CATEGORY_LABELS[fields.categoria] ?? null : null,
     titulo,
-    // El subtítulo propio del nombre gana a la descripción: es específico de este evento y
-    // ya está redactado para ir detrás del título.
-    subtitulo: subtitulo ?? (fields.descripcion ? firstSentence(fields.descripcion) : null),
+    // Tres fuentes, en orden de cuánto se ha decidido cada una a propósito: el campo
+    // `subtitulo` del CRM lo escribe alguien para esto y gana siempre; si está vacío, el
+    // que venga detrás del separador en el propio nombre; y en último lugar la primera
+    // frase de la descripción, que es la única que no se redactó pensando en el post.
+    //
+    // Ojo: cuando el campo está relleno, el trozo que el nombre llevara detrás del
+    // separador se pierde — el titular ya se ha quedado solo con la parte de delante,
+    // porque un titular con "|" dentro no se lee bien.
+    subtitulo:
+      fields.subtitulo ?? subtitulo ?? (fields.descripcion ? firstSentence(fields.descripcion) : null),
     fecha: formatEventDate(fields.fechaDeInicio, fields.fechaDeFin, fields.todoElDia),
     lugar,
     // Solo se destaca lo gratuito: es el mayor gancho de un post de agenda. "De pago" no

@@ -119,6 +119,7 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
     // `urlWeb`/`fuente`/`enlaceEvento`/`webId` (no van en la imagen) y `comentarios` (notas
     // internas de la redacción).
     fieldsSelection: `
+      subtitulo
       fechaDeInicio
       fechaDeFin
       todoElDia
@@ -132,6 +133,7 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
     `,
     storyImageField: "imagenStory",
     readFields: (node) => ({
+      subtitulo: blankToNull(node.subtitulo),
       fechaDeInicio: blankToNull(node.fechaDeInicio),
       fechaDeFin: blankToNull(node.fechaDeFin),
       todoElDia: node.todoElDia === true,
