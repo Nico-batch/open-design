@@ -176,55 +176,15 @@ export function formatEventDate(
   return todoElDia ? day : `${day} · ${formatTime(inicio)} h`;
 }
 
-// ── Descripción ─────────────────────────────────────────────────────
-
-/** Una línea más corta que esto es un rótulo ("## ¡REPETIMOS!"), no una frase con
- *  contenido; el subtítulo se salta esas y busca el primer párrafo de verdad. */
-const MIN_MEANINGFUL = 40;
-
-function stripMarkdown(line: string): string {
-  return line
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // enlaces e imágenes → su texto
-    .replace(/^\s{0,3}#{1,6}\s+/, "") // encabezados
-    .replace(/^\s*[*+-]\s+/, "") // viñetas
-    .replace(/^\s*\d+\.\s+/, "") // listas numeradas
-    .replace(/^\s*>\s?/, "") // citas
-    .replace(/\*\*|__|\*|`/g, "") // negrita, cursiva, código
-    .replace(/\\$/, "") // salto de línea forzado de markdown
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// ── Nombre → titular ────────────────────────────────────────────────
 
 /**
- * La primera frase con contenido de la descripción, para usarla de subtítulo.
+ * Muchos nombres traen algo pegado detrás de un separador ("PARTIENDO LA PANA | Tributo a
+ * Estopa", "Marisol Delgado – Espectáculo Flamenco"). El titular se queda solo con la parte
+ * de delante: un titular con "|" dentro no se lee bien a cuerpo grande.
  *
- * Las descripciones reales son largas y muy formateadas (encabezados, listas con emojis,
- * negritas), así que esto no es un simple `split(".")`: primero busca el primer párrafo que
- * parezca prosa y solo entonces corta.
- */
-export function firstSentence(markdown: string, maxChars = 120): string | null {
-  const lines = markdown.split(/\r?\n/).map(stripMarkdown).filter(Boolean);
-  const paragraph = lines.find((l) => l.length >= MIN_MEANINGFUL) ?? lines[0];
-  if (!paragraph) return null;
-
-  const match = paragraph.match(/^(.+?[.!?])(\s|$)/);
-  const sentence = match ? match[1] : paragraph;
-  if (sentence.length <= maxChars) return sentence;
-
-  // Cortar por palabra, nunca a mitad de una.
-  const cut = sentence.slice(0, maxChars);
-  const lastSpace = cut.lastIndexOf(" ");
-  const trimmed = lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut;
-  return `${trimmed.replace(/[,;:]$/, "")}…`;
-}
-
-// ── Nombre → titular + subtítulo ────────────────────────────────────
-
-/**
- * Muchos nombres ya vienen con su propio subtítulo detrás de un separador
- * ("PARTIENDO LA PANA | Tributo a Estopa", "Marisol Delgado – Espectáculo Flamenco").
- * Partirlos da una jerarquía tipográfica de balde, y bastante mejor que la primera frase de
- * la descripción, que suele ser genérica.
+ * Lo de detrás **ya no se usa como subtítulo**. Ese sale únicamente del campo `subtitulo`
+ * del CRM — ver `buildEventCopy`.
  *
  * Los guiones exigen espacios alrededor: uno pegado casi siempre forma parte de una palabra
  * ("Low-Cost"), mientras que uno suelto separa de verdad.
@@ -232,42 +192,35 @@ export function firstSentence(markdown: string, maxChars = 120): string | null {
 const TITLE_SEPARATOR = /\s*\|\s*|\s+[–—-]\s+/;
 const MIN_PART = 3;
 
-function splitName(name: string): { titulo: string; subtitulo: string | null } {
+function titleFromName(name: string): string {
   const parts = name
     .split(TITLE_SEPARATOR)
     .map((p) => p.trim())
     .filter(Boolean);
-  if (parts.length < 2) return { titulo: name.trim(), subtitulo: null };
+  if (parts.length < 2) return name.trim();
   const [titulo, ...rest] = parts;
-  const subtitulo = rest.join(" · ");
-  if (titulo.length < MIN_PART || subtitulo.length < MIN_PART) {
-    return { titulo: name.trim(), subtitulo: null };
-  }
-  return { titulo, subtitulo };
+  // Si cualquiera de las dos mitades es un fragmento, el separador no estaba separando
+  // nada y el nombre se deja entero.
+  if (titulo.length < MIN_PART || rest.join(" ").length < MIN_PART) return name.trim();
+  return titulo;
 }
 
 // ── Todo junto ──────────────────────────────────────────────────────
 
 export function buildEventCopy(fields: EventFields, name: string): EventCopy {
-  const { titulo, subtitulo } = splitName(name);
-
   // El sitio concreto primero y el municipio después: "Magma Club · Alicante" se lee como
   // una dirección, y cualquiera de los dos puede faltar.
   const lugar = [fields.direccion, fields.municipio].filter(Boolean).join(" · ") || null;
 
   return {
     categoria: fields.categoria ? CATEGORY_LABELS[fields.categoria] ?? null : null,
-    titulo,
-    // Tres fuentes, en orden de cuánto se ha decidido cada una a propósito: el campo
-    // `subtitulo` del CRM lo escribe alguien para esto y gana siempre; si está vacío, el
-    // que venga detrás del separador en el propio nombre; y en último lugar la primera
-    // frase de la descripción, que es la única que no se redactó pensando en el post.
-    //
-    // Ojo: cuando el campo está relleno, el trozo que el nombre llevara detrás del
-    // separador se pierde — el titular ya se ha quedado solo con la parte de delante,
-    // porque un titular con "|" dentro no se lee bien.
-    subtitulo:
-      fields.subtitulo ?? subtitulo ?? (fields.descripcion ? firstSentence(fields.descripcion) : null),
+    titulo: titleFromName(name),
+    // Una única fuente, a propósito. Antes se intentaba deducir del trozo que hubiera
+    // detrás del separador del nombre o de la primera frase de `descripcion`, pero eso es
+    // adivinar: la descripción está redactada para la ficha web, no para un post, y lo que
+    // salía de ahí había que reescribirlo casi siempre. Si nadie ha escrito un subtítulo en
+    // el CRM, no hay subtítulo — y el bloque sencillamente no se crea.
+    subtitulo: fields.subtitulo,
     fecha: formatEventDate(fields.fechaDeInicio, fields.fechaDeFin, fields.todoElDia),
     lugar,
     // Solo se destaca lo gratuito: es el mayor gancho de un post de agenda. "De pago" no

@@ -44,8 +44,6 @@ export interface EventFields {
   categoria: string | null;
   destacado: boolean;
   patrocinado: boolean;
-  /** Markdown, largo y con formato — se usa solo su primera frase. */
-  descripcion: string | null;
 }
 
 export interface Page {

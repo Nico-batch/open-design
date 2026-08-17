@@ -1729,14 +1729,19 @@ registro en Twenty:
   escrituras de prueba revertidas a vacío después.
 - Precio a 27 px (antes 34), sin errores de consola en ningún paso.
 
-**El campo `subtitulo` manda sobre el resto.** El subtítulo sale ahora de tres fuentes, en
-orden de cuánto se ha decidido cada una a propósito: el campo `subtitulo` del CRM (que
-alguien escribe justo para esto), lo que venga detrás del separador en el propio nombre, y
-por último la primera frase de `descripcion`, la única que no se redactó pensando en el
-post. Estaba vacío en los 99 registros al añadirlo, así que hasta que se rellene el
-comportamiento es idéntico. Ojo con una consecuencia: cuando el campo está relleno, el
-trozo que el nombre llevara detrás del separador se pierde, porque el titular ya se ha
-quedado solo con la parte de delante.
+**El subtítulo sale solo del campo `subtitulo`.** Se probó a deducirlo del trozo que
+hubiera detrás del separador del nombre o de la primera frase de `descripcion`, y las dos
+fuentes se descartaron por lo mismo: son adivinanzas. La descripción está redactada para la
+ficha web, no para un post, y lo que salía de ahí había que reescribirlo casi siempre. Si
+nadie lo ha escrito en el CRM, **no hay subtítulo** y el bloque no se crea — que es
+exactamente lo que la plantilla ya sabe hacer con cualquier campo vacío.
+
+El nombre se sigue partiendo por el separador (`|`, guión suelto) para quedarse con la
+parte de delante como titular: uno con `|` dentro no se lee bien a cuerpo grande. Lo de
+detrás simplemente se descarta.
+
+Como `descripcion` ya no la usa nadie, se dejó de pedir a Twenty: una llamada más ligera y
+un campo menos que mantener en el tipo.
 
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)

@@ -129,7 +129,6 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
       categoria
       destacado
       patrocinado
-      descripcion { markdown }
     `,
     storyImageField: "imagenStory",
     readFields: (node) => ({
@@ -143,7 +142,6 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
       categoria: blankToNull(node.categoria),
       destacado: node.destacado === true,
       patrocinado: node.patrocinado === true,
-      descripcion: blankToNull(node.descripcion?.markdown),
     }),
   },
 };
