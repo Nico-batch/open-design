@@ -496,9 +496,7 @@ function parseObjectType(raw: string): TwentyObjectType | null {
  * diseños nuevos; los ya creados conservan el tamaño con el que se guardaron.
  */
 const DEFAULT_CANVAS_SIZE: Record<TwentyObjectType, { width: number; height: number }> = {
-  // 4:5 desde que las noticias tienen plantilla propia (foto arriba, franja de texto
-  // abajo): ese diseño está definido sobre 1080×1350 y ocupa más pantalla en el feed.
-  news: { width: 1080, height: 1350 },
+  news: { width: 1080, height: 1080 },
   event: { width: 1080, height: 1350 },
 };
 

@@ -9,14 +9,13 @@ import {
 } from "../lib/background";
 import { buildEventCopy } from "../lib/event-fields";
 import { findByRole, refreshPosterImage } from "../lib/event-template";
-import { buildNewsCopy } from "../lib/news-fields";
-import { hasNewsTemplate, relayoutNewsTemplate } from "../lib/news-template";
+import { hasNewsTemplate, relayoutNewsTemplate, markRecordTitle } from "../lib/news-template";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { GuidesOverlay } from "./guides-overlay";
 import { api } from "../api";
 import { coerceTwentyObjectType } from "../lib/twenty";
-import type { EventFields, NewsFields, Page, TwentyRecord } from "../types";
+import type { EventFields, Page, TwentyRecord } from "../types";
 
 interface PageCanvasProps {
   page: Page;
@@ -243,23 +242,13 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         // Modo cartel ya compuesto: el cartel de encima también tiene que reflejar la foto
         // nueva, no solo el fondo desenfocado de detrás.
         await refreshPosterImage(c);
-      } else if (objectType === "news" && !saved && record.title) {
-        // Página en blanco de una noticia: se compone la plantilla (foto arriba, franja de
-        // texto abajo). `seal` deja el historial en una sola entrada — es el estado inicial
-        // del documento, y para volver al diseño de siempre está el botón del panel.
-        await editorRef.current.composeNewsOnCanvas(
-          c,
-          page.id,
-          buildNewsCopy(record.fields as NewsFields | null, record.title),
-          { pageWidth, pageHeight, seal: true }
-        );
-        // Sin guardar, la página seguiría contando como "en blanco" (saveDesign ignora el
-        // JSON "{}") y se recompondría en cada apertura, pisando lo que el operador hubiera
-        // editado entretanto.
-        editorRef.current.scheduleSave();
       } else if (!saved && record.title) {
-        // Cualquier otro objeto del CRM: el comportamiento de siempre, titular suelto.
-        editorRef.current.applyTextToCanvas(c, "heading", record.title);
+        // El comportamiento de siempre: el titular como un cuadro de texto suelto. La
+        // plantilla de noticias (§9.28) **no** se aplica sola — es una opción del panel
+        // "Noticia", así que abrir un registro deja la página como siempre la ha dejado.
+        // El titular va marcado para que, si luego se aplica la plantilla, se retire en vez
+        // de quedarse flotando encima de la foto.
+        markRecordTitle(editorRef.current.applyTextToCanvas(c, "heading", record.title));
       }
     };
 

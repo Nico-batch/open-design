@@ -36,6 +36,28 @@ for (const klass of [fabric.Textbox, fabric.Rect] as unknown as Array<{
   klass.customProperties = [...(klass.customProperties ?? []), "_nwRole", "_nwVariant"];
 }
 
+/**
+ * Marca del titular que el editor inserta **automáticamente** al abrir un registro del CRM
+ * (el cuadro de texto suelto de siempre). No es parte de la plantilla, pero la plantilla
+ * tiene que poder retirarlo: si no, al pulsar "Aplicar plantilla" ese titular se quedaría
+ * flotando encima de la foto, duplicando el que la plantilla pinta en la franja.
+ *
+ * Es una marca aparte y no un `_nwRole` a propósito: `hasNewsTemplate` diría que sí hay
+ * plantilla en una página que solo tiene el titular suelto, y el panel ofrecería "volver al
+ * diseño normal" estando ya en él. Lo que el operador añada a mano no lleva marca y no se
+ * toca nunca.
+ */
+export const RECORD_TITLE_PROP = "_isRecordTitle";
+(fabric.Textbox as unknown as { customProperties?: string[] }).customProperties = [
+  ...((fabric.Textbox as unknown as { customProperties?: string[] }).customProperties ?? []),
+  RECORD_TITLE_PROP,
+];
+
+/** Marca un cuadro de texto como "el titular que puso el editor solo". */
+export function markRecordTitle(obj: fabric.FabricObject): void {
+  (obj as any)[RECORD_TITLE_PROP] = true;
+}
+
 export type NwRole =
   | "band"
   | "chipBg"
@@ -514,6 +536,10 @@ export async function composeNewsTemplate(
   const { pageWidth, pageHeight } = opts;
   const variant = opts.variant ?? "navy";
   clearNewsTemplate(canvas);
+  // El titular suelto que el editor pone al abrir el registro lo sustituye el de la franja.
+  for (const obj of canvas.getObjects()) {
+    if ((obj as any)[RECORD_TITLE_PROP]) canvas.remove(obj);
+  }
 
   // "La fotografía conserva sus colores originales sin filtros ni virados", y "sin texto,
   // degradados ni velos encima": se limpia lo que hubiera puesto el operador (o la plantilla

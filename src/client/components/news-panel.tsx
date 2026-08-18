@@ -165,20 +165,22 @@ export function NewsPanel() {
     [run, revertNewsTemplate, fetchCopy, copy, canvasWidth, canvasHeight]
   );
 
-  /** La variante solo recolorea, no recompone: cambiar dos colores no debe costar los
-   *  retoques manuales sobre los textos. */
+  /** Con la plantilla puesta, la variante solo **recolorea**: recomponer volvería a pedir el
+   *  registro a Twenty y descartaría los retoques manuales sobre los textos, que es un precio
+   *  absurdo por cambiar dos colores. Sin plantilla puesta no compone nada — solo deja
+   *  elegido el color con el que se aplicará. */
   const chooseVariant = useCallback(
     (next: NewsVariant) => {
       if (next === variant) return;
       if (!applied) {
-        void compose({ variant: next });
+        setVariant(next);
         return;
       }
       void run((canvas, pageId) => {
         setNewsVariantOnCanvas(canvas, pageId, next);
       });
     },
-    [variant, applied, compose, run, setNewsVariantOnCanvas]
+    [variant, applied, run, setNewsVariantOnCanvas]
   );
 
   const commitFigure = useCallback(
@@ -211,8 +213,9 @@ export function NewsPanel() {
   return (
     <div>
       <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
-        La página se compone sola: la foto arriba y una franja de color abajo con la sección, el
-        titular y el pie. El titular nunca queda encima de la foto.
+        Plantilla opcional: la foto arriba y una franja de color abajo con la sección, el
+        titular y el pie, de modo que el titular nunca queda encima de la foto. Está pensada
+        para 1080×1350; en cuadrado la franja ocupa más sitio.
       </p>
 
       {applied ? (
@@ -274,14 +277,14 @@ export function NewsPanel() {
       <p class="text-zinc-400 text-[11px] font-semibold mb-1">Dato destacado</p>
       <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">
         No existe como campo en Twenty. Si lo dejas vacío, el bloque no se crea y el titular
-        sube a ocupar su sitio.
+        sube a ocupar su sitio. Se puede escribir antes de aplicar la plantilla.
       </p>
       <div class="grid grid-cols-[1fr_1.4fr] gap-1 mb-3">
         <input
           class={inputClass}
           placeholder="1.477"
           value={figure.valor}
-          disabled={busy || !applied}
+          disabled={busy}
           onChange={(e) =>
             commitFigure({ valor: (e.target as HTMLInputElement).value, unidad: figure.unidad })
           }
@@ -291,7 +294,7 @@ export function NewsPanel() {
           class={inputClass}
           placeholder="negocios abiertos"
           value={figure.unidad}
-          disabled={busy || !applied}
+          disabled={busy}
           onChange={(e) =>
             commitFigure({ valor: figure.valor, unidad: (e.target as HTMLInputElement).value })
           }

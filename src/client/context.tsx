@@ -43,7 +43,11 @@ export interface EditorContextValue {
 
   // Canvas actions
   addText: (preset: "heading" | "subheading" | "body", customText?: string) => void;
-  applyTextToCanvas: (canvas: fabric.Canvas, preset: "heading" | "subheading" | "body", customText?: string) => void;
+  applyTextToCanvas: (
+    canvas: fabric.Canvas,
+    preset: "heading" | "subheading" | "body",
+    customText?: string
+  ) => fabric.Textbox;
   addShape: (type: "rect" | "circle" | "line" | "triangle") => void;
   addImage: (url: string) => void;
   setBackground: (type: "color" | "gradient" | "image", value: string, fit?: "cover" | "contain") => void;
@@ -85,7 +89,7 @@ export interface EditorContextValue {
     canvas: fabric.Canvas,
     pageId: string,
     copy: NewsCopy,
-    opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant; seal?: boolean }
+    opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant }
   ) => Promise<NewsVariant | null>;
   /** Quita la plantilla y devuelve la página al diseño de siempre (foto a sangre + titular). */
   revertNewsTemplate: (

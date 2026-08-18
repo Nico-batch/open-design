@@ -154,7 +154,7 @@ src/
     │   ├── event-fields.ts     — campos de un evento → texto publicable, fechas (§9.26)
     │   ├── event-template.ts   — plantilla de eventos: bloques, modos, temas (§9.26/§9.27)
     │   ├── news-fields.ts      — secciones de una noticia y la cuenta del pie (§9.28)
-    │   └── news-template.ts    — plantilla de noticias: franja, chip, titular, pie (§9.28)
+    │   └── news-template.ts    — plantilla opcional de noticias: franja, chip, pie (§9.28)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -1753,17 +1753,19 @@ Como `descripcion` ya no la usa nadie, se dejó de pedir a Twenty: una llamada m
 un campo menos que mantener en el tipo.
 
 
-### 9.28 Plantilla automática de noticias
+### 9.28 Plantilla de noticias (opcional)
 
 Las noticias tenían el trato de siempre: foto a sangre y el titular como un cuadro de texto
 suelto encima, que había que colocar, dimensionar y hacer legible a mano en cada post (velo,
-sombra, «Mejorar titular»). Ahora se componen solas, con un diseño distinto al de los eventos
-y ya definido por el usuario: **foto arriba, franja de color sólido abajo** con el chip de
-sección, el titular y el pie. El titular no puede superponerse a la foto, así que ese trabajo
-de legibilidad desaparece.
+sombra, «Mejorar titular»). Ahora hay una plantilla que hace ese trabajo de una vez, con un
+diseño distinto al de los eventos y ya definido por el usuario: **foto arriba, franja de color
+sólido abajo** con el chip de sección, el titular y el pie. El titular no puede superponerse a
+la foto, así que ese trabajo de legibilidad desaparece.
 
-Se aplica sola en la primera apertura, como en eventos, y hay un botón para **volver al
-diseño de siempre**. Los eventos no se tocan.
+**Es opcional, no automática**: abrir una noticia deja la página exactamente como siempre
+—foto a sangre y el titular como cuadro de texto suelto— y la plantilla se pone y se quita
+desde la sección «Noticia» del panel izquierdo. Es la diferencia deliberada con los eventos,
+donde sí se compone sola. Los eventos no se tocan.
 
 #### Lo que dicen los datos reales de `news` (verificado por MCP, 658 registros)
 
@@ -1882,27 +1884,39 @@ contradecirse. Confirman al perder el foco o con **Enter**.
 
 #### Dónde se engancha
 
-- **`page-canvas.tsx`**: rama simétrica a la de eventos — página en blanco de una noticia →
-  `composeNewsOnCanvas({ seal: true })` + `scheduleSave()`. Lo segundo no es opcional:
-  `saveDesign` ignora las páginas cuyo JSON sea `"{}"`, que es justo la condición de "primera
-  vez", así que sin guardar se recompondría en cada apertura pisando lo editado.
+- **`page-canvas.tsx` no cambia de comportamiento**: una noticia en blanco sigue recibiendo
+  el titular como cuadro de texto suelto. Lo único nuevo es que ese titular va **marcado**
+  (`_isRecordTitle`), y ahí está la razón de la marca: al pulsar "Aplicar plantilla" hay que
+  retirarlo, o se quedaría flotando sobre la foto duplicando el titular que la plantilla
+  pinta en la franja. Es una marca aparte de `_nwRole` a propósito —si no, `hasNewsTemplate`
+  diría que hay plantilla en una página que solo tiene el titular suelto— y **lo que el
+  operador añade a mano no lleva ninguna marca, así que no se toca nunca** (verificado: un
+  texto propio sobrevive a aplicar la plantilla y se queda por encima de la franja).
+- **Aplicar la plantilla es una acción del operador, así que deja una entrada de historial**
+  (no se sella nada, al contrario que la composición automática de los eventos): un solo
+  `Ctrl+Z` devuelve exactamente lo que había antes del clic.
 - **La foto se re-encaja a la banda en los cuatro sitios donde puede volver a la página
   entera**: el refresco desde Twenty de cada apertura, `setCanvasSize`, `setBackgroundImageFit`
   (Cover/Contain) y `setBackground` (subir otra foto). Si falta cualquiera, la foto se mete
   por debajo de la franja — el mismo patrón de §9.18, otra vez.
-- **`DEFAULT_CANVAS_SIZE.news`** pasa de 1080×1080 a **1080×1350**. Solo afecta a diseños
-  nuevos; los borradores de noticia ya creados conservan su tamaño y su contenido, y como no
-  están en blanco tampoco se les compone nada (verificado con un borrador fabricado a mano).
-- **`revertNewsTemplate`** es el botón que pidió el usuario: borra lo marcado, devuelve la
-  foto a cover de página completa, la marca a su esquina y el titular a un cuadro de texto —
-  exactamente el estado con el que nacía una noticia antes. Una entrada de historial, así que
-  `Ctrl+Z` devuelve la plantilla.
+- **`DEFAULT_CANVAS_SIZE.news` se queda en 1080×1080.** La plantilla está pensada para
+  1080×1350 y el panel lo dice, pero como no se aplica sola, cambiar el tamaño por defecto
+  alteraría el diseño de todas las noticias para servir a una opción que quizá no se use. El
+  formato se cambia desde el toolbar y la plantilla se re-maqueta sola.
+- **`revertNewsTemplate`** es el botón de vuelta: borra lo marcado, devuelve la foto a cover
+  de página completa, la marca a su esquina y el titular a un cuadro de texto — exactamente
+  el estado con el que nace una noticia. Una entrada de historial, así que `Ctrl+Z` devuelve
+  la plantilla.
 
 #### Verificado contra el build de producción
 
 `:8788` con CSP real (regla de §9.11/§10.3), con Playwright, leyendo el `canvas_json`
 persistido por la API y mirando los PNG exportados, no solo lo que se ve en pantalla:
 
+- **Al abrir una noticia no se compone nada**: foto + un solo cuadro de texto con el titular,
+  a 1080×1080, como siempre. Aplicar → plantilla y el titular automático retirado (cero
+  textos sueltos). Volver → el titular otra vez. Aplicar de nuevo → **sin duplicados**.
+  `Ctrl+Z` deshace la aplicación entera de una vez.
 - Cuatro noticias reales de distinta longitud: cero solapes (medidos par a par), `x = 64` en
   todos los bloques, margen inferior 48,0 px exacto y ningún bloque por encima del borde de la
   franja.
@@ -1914,8 +1928,8 @@ persistido por la API y mirando los PNG exportados, no solo lo que se ve en pant
 - Los tres formatos: 1080×1350 → 1080×1920 (franja al 62,0 %, titular a 82 px) → 1080×1080
   (franja al 49,4 %), con la foto re-encajada a cada banda y el margen inferior siempre en 48.
 - Revertir deja foto 2400×1350 a cover + un `Textbox`, y `Ctrl+Z` devuelve la plantilla entera.
-- Persistencia: abrir dos veces da un `canvas_json` **idéntico**, con una sola franja, una sola
-  foto y un solo titular, y sin `data:image` dentro.
+- Persistencia: con la plantilla aplicada y guardada, abrir dos veces da un `canvas_json`
+  **idéntico**, con una sola franja, una sola foto y un solo titular, y sin `data:image`.
 - Barlow Condensed 400 y 500 llegan a `loaded`.
 - "Guardar en Twenty" completa y escribe en `imagenEditada` (`target=feed`); la escritura de
   prueba se revirtió a su valor anterior.

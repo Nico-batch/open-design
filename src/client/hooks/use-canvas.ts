@@ -45,6 +45,7 @@ import {
   clearNewsTemplate,
   applyNewsVariant,
   setNewsFigure,
+  markRecordTitle,
   type NewsVariant,
 } from "../lib/news-template";
 import type { NewsCopy } from "../lib/news-fields";
@@ -316,6 +317,7 @@ export function useCanvasState() {
       // The preset's font is almost certainly not fetched yet on a fresh page, so the
       // box would otherwise be sized from fallback metrics (see lib/fonts.ts).
       syncCanvasFonts(canvas);
+      return text;
     },
     [canvasWidth, canvasHeight]
   );
@@ -736,18 +738,17 @@ export function useCanvasState() {
   /**
    * Compone (o recompone) la plantilla de una noticia sobre un lienzo concreto.
    *
-   * Mismo patrón que `composeEventOnCanvas` y por los mismos motivos: parametrizado por
-   * lienzo (page-canvas.tsx tiene que encadenarlo justo después de que el fondo cargue),
-   * `isRestoringRef` para que los ocho objetos no sean ocho pasos de deshacer, y `seal` para
-   * distinguir la composición automática —el estado inicial del documento, una sola entrada
-   * de historial— del botón, que sí debe poder deshacerse con un Ctrl+Z.
+   * Parametrizado por lienzo, como `composeEventOnCanvas`, para no depender de "el canvas
+   * activo". `isRestoringRef` hace que los ocho objetos que añade no sean ocho pasos de
+   * deshacer, sino uno: aplicar la plantilla es una acción del operador y un solo Ctrl+Z
+   * tiene que devolver exactamente lo que había antes del clic.
    */
   const composeNewsOnCanvas = useCallback(
     async (
       canvas: fabric.Canvas,
       pageId: string,
       copy: NewsCopy,
-      opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant; seal?: boolean }
+      opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant }
     ): Promise<NewsVariant | null> => {
       isRestoringRef.current.add(pageId);
       let variant: NewsVariant | null = null;
@@ -764,13 +765,7 @@ export function useCanvasState() {
         console.error("No se pudo componer la plantilla de la noticia:", e);
       } finally {
         isRestoringRef.current.delete(pageId);
-        if (opts.seal) {
-          historySealedRef.current.add(pageId);
-          const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
-          historyMapRef.current.set(pageId, { entries: [json], index: 0 });
-        } else {
-          saveHistory(pageId);
-        }
+        saveHistory(pageId);
         updateUndoRedoState(pageId);
       }
       // La plantilla limpia filtros y velo (la guía no admite ninguno sobre la foto); sin
@@ -806,7 +801,9 @@ export function useCanvasState() {
         }
         // Sin franja, `logo.ts` vuelve a colocarla arriba a la derecha y sin sombra.
         await applyLogoToCanvas(canvas, opts.pageWidth, opts.pageHeight);
-        applyTextToCanvas(canvas, "heading", title);
+        // Marcado como titular automático: si luego se vuelve a aplicar la plantilla, se
+        // retira en vez de quedarse flotando sobre la foto.
+        markRecordTitle(applyTextToCanvas(canvas, "heading", title));
       } finally {
         isRestoringRef.current.delete(pageId);
         saveHistory(pageId);
