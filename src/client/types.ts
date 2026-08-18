@@ -19,9 +19,20 @@ export interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
-  /** Campos publicables del registro. Solo los eventos declaran alguno; en una noticia
-   *  es null y el editor se comporta exactamente como antes (foto + titular). */
-  fields: EventFields | null;
+  /**
+   * Campos publicables del registro, distintos por objeto: `NewsFields` para una noticia y
+   * `EventFields` para un evento. Quien los lee ya ha discriminado por `objectType` antes
+   * (así se eligió la ruta de la que vienen), así que ahí se estrecha el tipo con un `as` —
+   * una comprobación en runtime no añadiría nada que no supiéramos ya.
+   */
+  fields: EventFields | NewsFields | null;
+}
+
+/** Lo único que la plantilla de noticias necesita del CRM además del titular. */
+export interface NewsFields {
+  /** Uno de los cuatro valores del enum de sección; ver SECTION_LABELS en lib/news-fields.ts.
+   *  Puede ser null: hay noticias sin categoría asignada. */
+  categoria: string | null;
 }
 
 /**

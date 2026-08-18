@@ -9,12 +9,14 @@ import {
 } from "../lib/background";
 import { buildEventCopy } from "../lib/event-fields";
 import { findByRole, refreshPosterImage } from "../lib/event-template";
+import { buildNewsCopy } from "../lib/news-fields";
+import { hasNewsTemplate, relayoutNewsTemplate } from "../lib/news-template";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { GuidesOverlay } from "./guides-overlay";
 import { api } from "../api";
 import { coerceTwentyObjectType } from "../lib/twenty";
-import type { Page, TwentyRecord } from "../types";
+import type { EventFields, NewsFields, Page, TwentyRecord } from "../types";
 
 interface PageCanvasProps {
   page: Page;
@@ -217,6 +219,10 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
           { preserveFraming: true, pageWidth, pageHeight }
         );
         editorRef.current.syncEffectsFromCanvas(c);
+        // La foto se re-pide en cada apertura, y `applyBackgroundToCanvas` la encaja contra
+        // la página entera: con la plantilla de noticias vive en su banda superior, así que
+        // hay que devolverla ahí o entraría metida por debajo de la franja.
+        if (hasNewsTemplate(c)) relayoutNewsTemplate(c, pageWidth, pageHeight);
       }
 
       if (objectType === "event" && record.fields && record.title && !saved) {
@@ -226,7 +232,7 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         await editorRef.current.composeEventOnCanvas(
           c,
           page.id,
-          buildEventCopy(record.fields, record.title),
+          buildEventCopy(record.fields as EventFields, record.title),
           { pageWidth, pageHeight, seal: true }
         );
         // Sin guardar, la página seguiría contando como "en blanco" (saveDesign ignora el
@@ -237,8 +243,22 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         // Modo cartel ya compuesto: el cartel de encima también tiene que reflejar la foto
         // nueva, no solo el fondo desenfocado de detrás.
         await refreshPosterImage(c);
+      } else if (objectType === "news" && !saved && record.title) {
+        // Página en blanco de una noticia: se compone la plantilla (foto arriba, franja de
+        // texto abajo). `seal` deja el historial en una sola entrada — es el estado inicial
+        // del documento, y para volver al diseño de siempre está el botón del panel.
+        await editorRef.current.composeNewsOnCanvas(
+          c,
+          page.id,
+          buildNewsCopy(record.fields as NewsFields | null, record.title),
+          { pageWidth, pageHeight, seal: true }
+        );
+        // Sin guardar, la página seguiría contando como "en blanco" (saveDesign ignora el
+        // JSON "{}") y se recompondría en cada apertura, pisando lo que el operador hubiera
+        // editado entretanto.
+        editorRef.current.scheduleSave();
       } else if (!saved && record.title) {
-        // Noticias: exactamente el comportamiento de siempre.
+        // Cualquier otro objeto del CRM: el comportamiento de siempre, titular suelto.
         editorRef.current.applyTextToCanvas(c, "heading", record.title);
       }
     };

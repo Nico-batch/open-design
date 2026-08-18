@@ -10,7 +10,7 @@ import {
   type EventLayoutMode,
   type EventTheme,
 } from "../lib/event-template";
-import type { TwentyRecord } from "../types";
+import type { EventFields, TwentyRecord } from "../types";
 
 /**
  * Controles propios de un diseño que viene de un evento del CRM.
@@ -76,7 +76,8 @@ export function EventPanel() {
     if (!recordId) return null;
     const record = await api<TwentyRecord>("GET", `/api/twenty/event/${recordId}`);
     if (!record.fields || !record.title) return null;
-    return buildEventCopy(record.fields, record.title);
+    // El tipo ya está discriminado por la ruta de la que viene (`/api/twenty/event/...`).
+    return buildEventCopy(record.fields as EventFields, record.title);
   }, [recordId]);
 
   useEffect(() => {

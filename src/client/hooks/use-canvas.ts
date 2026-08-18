@@ -39,6 +39,15 @@ import {
   type EventTheme,
 } from "../lib/event-template";
 import type { EventCopy } from "../lib/event-fields";
+import {
+  composeNewsTemplate,
+  relayoutNewsTemplate,
+  clearNewsTemplate,
+  applyNewsVariant,
+  setNewsFigure,
+  type NewsVariant,
+} from "../lib/news-template";
+import type { NewsCopy } from "../lib/news-fields";
 
 const MAX_HISTORY = 50;
 
@@ -518,9 +527,12 @@ export function useCanvasState() {
       const canvas = getActiveCanvas();
       const pageId = activeCanvasIdRef.current;
       if (!canvas || !pageId) return;
-      applyBackgroundToCanvas(canvas, pageId, type, value, fit);
+      const applied = applyBackgroundToCanvas(canvas, pageId, type, value, fit);
+      // Con la plantilla de noticias puesta, una foto nueva entra encajada a la página
+      // entera y se metería por debajo de la franja: hay que devolverla a su banda.
+      if (applied) void applied.then(() => relayoutNewsTemplate(canvas, canvasWidth, canvasHeight));
     },
-    [getActiveCanvas, applyBackgroundToCanvas]
+    [getActiveCanvas, applyBackgroundToCanvas, canvasWidth, canvasHeight]
   );
 
   // Re-fits the current background image (if any) without re-uploading it. Doubles as the
@@ -535,6 +547,9 @@ export function useCanvasState() {
       fitBackgroundImage(bgObj, canvasWidth, canvasHeight, fit);
       (bgObj as any)._bgFit = fit;
       bgObj.setCoords();
+      // Cover/Contain encajan contra la página; con la plantilla de noticias la foto vive en
+      // su banda, así que se vuelve a encajar ahí en vez de dejarla debajo de la franja.
+      relayoutNewsTemplate(canvas, canvasWidth, canvasHeight);
       canvas.requestRenderAll();
       saveHistory(pageId);
     },
@@ -714,6 +729,121 @@ export function useCanvasState() {
       return mode;
     },
     [saveHistory, updateUndoRedoState, syncEffectsFromCanvas]
+  );
+
+  // ── Plantilla de noticias ───────────────────────────────────────────
+
+  /**
+   * Compone (o recompone) la plantilla de una noticia sobre un lienzo concreto.
+   *
+   * Mismo patrón que `composeEventOnCanvas` y por los mismos motivos: parametrizado por
+   * lienzo (page-canvas.tsx tiene que encadenarlo justo después de que el fondo cargue),
+   * `isRestoringRef` para que los ocho objetos no sean ocho pasos de deshacer, y `seal` para
+   * distinguir la composición automática —el estado inicial del documento, una sola entrada
+   * de historial— del botón, que sí debe poder deshacerse con un Ctrl+Z.
+   */
+  const composeNewsOnCanvas = useCallback(
+    async (
+      canvas: fabric.Canvas,
+      pageId: string,
+      copy: NewsCopy,
+      opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant; seal?: boolean }
+    ): Promise<NewsVariant | null> => {
+      isRestoringRef.current.add(pageId);
+      let variant: NewsVariant | null = null;
+      try {
+        variant = await composeNewsTemplate(canvas, copy, {
+          pageWidth: opts.pageWidth,
+          pageHeight: opts.pageHeight,
+          variant: opts.variant,
+        });
+        // La plantilla coloca la marca arriba a la izquierda, y eso lo decide `logo.ts` a
+        // partir de la franja: hay que reconstruir la capa para que lo aplique.
+        await applyLogoToCanvas(canvas, opts.pageWidth, opts.pageHeight);
+      } catch (e) {
+        console.error("No se pudo componer la plantilla de la noticia:", e);
+      } finally {
+        isRestoringRef.current.delete(pageId);
+        if (opts.seal) {
+          historySealedRef.current.add(pageId);
+          const json = withoutLogo(canvas, () => JSON.stringify(canvas.toJSON()));
+          historyMapRef.current.set(pageId, { entries: [json], index: 0 });
+        } else {
+          saveHistory(pageId);
+        }
+        updateUndoRedoState(pageId);
+      }
+      // La plantilla limpia filtros y velo (la guía no admite ninguno sobre la foto); sin
+      // esto los deslizadores del panel Bg seguirían mostrando los valores anteriores.
+      syncEffectsFromCanvas(canvas);
+      return variant;
+    },
+    [saveHistory, updateUndoRedoState, syncEffectsFromCanvas]
+  );
+
+  /**
+   * Deshace la plantilla y devuelve la página al diseño de siempre: foto a sangre encajada a
+   * la página completa, marca en su esquina de siempre y el titular como un cuadro de texto
+   * suelto. Es exactamente el estado con el que nacía una noticia antes de que existiera la
+   * plantilla, no un lienzo a medias.
+   */
+  const revertNewsTemplate = useCallback(
+    async (
+      canvas: fabric.Canvas,
+      pageId: string,
+      title: string,
+      opts: { pageWidth: number; pageHeight: number }
+    ): Promise<void> => {
+      isRestoringRef.current.add(pageId);
+      try {
+        clearNewsTemplate(canvas);
+        const bg = findBackgroundImage(canvas);
+        if (bg) {
+          // Estaba encajada a la banda superior, que ya no existe.
+          fitBackgroundImage(bg, opts.pageWidth, opts.pageHeight, "cover");
+          (bg as any)._bgFit = "cover";
+          bg.setCoords();
+        }
+        // Sin franja, `logo.ts` vuelve a colocarla arriba a la derecha y sin sombra.
+        await applyLogoToCanvas(canvas, opts.pageWidth, opts.pageHeight);
+        applyTextToCanvas(canvas, "heading", title);
+      } finally {
+        isRestoringRef.current.delete(pageId);
+        saveHistory(pageId);
+        updateUndoRedoState(pageId);
+      }
+      canvas.requestRenderAll();
+    },
+    [applyTextToCanvas, saveHistory, updateUndoRedoState]
+  );
+
+  /** Cambia de variante recoloreando lo que ya hay: no se vuelve a pedir el registro, así que
+   *  no se pierde ningún retoque manual sobre los textos generados. */
+  const setNewsVariantOnCanvas = useCallback(
+    (canvas: fabric.Canvas, pageId: string, variant: NewsVariant): void => {
+      if (applyNewsVariant(canvas, variant)) saveHistory(pageId);
+    },
+    [saveHistory]
+  );
+
+  /** Pone, cambia o quita la cifra destacada — el único bloque que no sale del CRM. */
+  const setNewsFigureOnCanvas = useCallback(
+    (
+      canvas: fabric.Canvas,
+      pageId: string,
+      valor: string,
+      unidad: string,
+      opts: { pageWidth: number; pageHeight: number }
+    ): void => {
+      if (!setNewsFigure(canvas, valor, unidad, opts.pageWidth, opts.pageHeight)) return;
+      // El cuerpo de la cifra es grande y Barlow Condensed puede no estar cargada todavía si
+      // se escribe recién abierto el editor: re-medir y volver a maquetar (§9.13 bug B).
+      void syncCanvasFonts(canvas).then(() => {
+        relayoutNewsTemplate(canvas, opts.pageWidth, opts.pageHeight);
+        saveHistory(pageId);
+      });
+    },
+    [saveHistory]
   );
 
   // ── Object manipulation ─────────────────────────────────────────────
@@ -1008,6 +1138,9 @@ export function useCanvasState() {
         }
         // Y la plantilla de eventos se re-apila contra el nuevo borde inferior.
         relayoutEventTemplate(canvas, width, height);
+        // La de noticias, igual: recoloca la franja y re-encaja la foto en la banda nueva
+        // (deshaciendo el encaje a página completa de justo arriba, que aquí no aplica).
+        relayoutNewsTemplate(canvas, width, height);
         canvas.requestRenderAll();
       }
     },
@@ -1215,6 +1348,10 @@ export function useCanvasState() {
     enhancePhoto,
     enhanceHeadline,
     composeEventOnCanvas,
+    composeNewsOnCanvas,
+    revertNewsTemplate,
+    setNewsVariantOnCanvas,
+    setNewsFigureOnCanvas,
     getCanvasForPage,
     getCanvasSize,
     updateSelectedObject,

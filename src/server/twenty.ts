@@ -66,9 +66,9 @@ interface TwentyObjectDef {
   /** Cómo leer ese campo de la respuesta. */
   readTitle: (node: Record<string, any>) => string | null;
   /**
-   * Selección GraphQL extra con los campos publicables del objeto, para los tipos que
-   * componen algo más que "foto + titular". Opcional a propósito: News no lo define y su
-   * respuesta no cambia en absoluto.
+   * Selección GraphQL extra con los campos publicables del objeto, más allá del titular y
+   * la imagen. Sigue siendo opcional: un objeto que solo necesite esos dos no lo define y
+   * su respuesta no lleva `fields`.
    */
   fieldsSelection?: string;
   /** Cómo convertir esos campos al payload plano que consume el cliente. */
@@ -108,6 +108,12 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
     updateMutation: "updateNews",
     titleSelection: "title { markdown }",
     readTitle: (node) => node.title?.markdown?.trim() || null,
+    // La plantilla de noticias solo necesita el titular (que ya viene arriba) y la sección.
+    // `categoria` es un enum de cuatro valores —ACTUALIDAD, DEPORTE, CULTURA, EDUCACION—
+    // comprobado por introspección; ojo, **no existe "Sucesos"**, así que el rojo de la
+    // guía de marca no tiene ningún valor al que aplicarse. Puede llegar null.
+    fieldsSelection: "categoria",
+    readFields: (node) => ({ categoria: blankToNull(node.categoria) }),
   },
   event: {
     queryField: "eventCustom",
@@ -150,7 +156,8 @@ export interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
-  /** Campos publicables del registro, o null si el objeto no declara ninguno (News). */
+  /** Campos publicables del registro (la sección en una noticia, la ficha entera en un
+   *  evento), o null si el objeto no declara ninguno. */
   fields: Record<string, unknown> | null;
 }
 

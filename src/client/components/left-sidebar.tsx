@@ -12,14 +12,16 @@ import {
   Sparkles,
   WandSparkles,
   CalendarDays,
+  Newspaper,
 } from "lucide-preact";
 import { useEditor } from "../context";
 import { TemplateCard } from "./template-card";
 import { DesignList } from "./design-list";
 import { EventPanel } from "./event-panel";
+import { NewsPanel } from "./news-panel";
 import { coerceTwentyObjectType } from "../lib/twenty";
 
-type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs" | "event";
+type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs" | "event" | "news";
 
 const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "templates", icon: Sparkles, label: "Templates" },
@@ -30,11 +32,17 @@ const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "designs", icon: LayoutGrid, label: "Designs" },
 ];
 
-/** Solo aparece cuando el diseño viene de un evento del CRM. */
+/** Solo aparecen cuando el diseño viene del CRM, y solo la del objeto que toque. */
 const EVENT_SECTION: { key: Section; icon: typeof LayoutGrid; label: string } = {
   key: "event",
   icon: CalendarDays,
   label: "Evento",
+};
+
+const NEWS_SECTION: { key: Section; icon: typeof LayoutGrid; label: string } = {
+  key: "news",
+  icon: Newspaper,
+  label: "Noticia",
 };
 
 const SECTION_TITLES: Record<Section, string> = {
@@ -45,6 +53,7 @@ const SECTION_TITLES: Record<Section, string> = {
   background: "Background",
   designs: "Designs",
   event: "Evento",
+  news: "Noticia",
 };
 
 const GRADIENT_PRESETS = [
@@ -68,10 +77,15 @@ export function LeftSidebar() {
     backgroundEffects, setBackgroundEffects, scrim, setScrim, templates, loadTemplate,
     enhancePhoto, activeDesign } =
     useEditor();
-  const isEventDesign =
-    !!activeDesign?.twenty_record_id &&
-    coerceTwentyObjectType(activeDesign.twenty_object_type) === "event";
-  const sections = isEventDesign ? [EVENT_SECTION, ...SECTIONS] : SECTIONS;
+  const twentyType = activeDesign?.twenty_record_id
+    ? coerceTwentyObjectType(activeDesign.twenty_object_type)
+    : null;
+  const sections =
+    twentyType === "event"
+      ? [EVENT_SECTION, ...SECTIONS]
+      : twentyType === "news"
+        ? [NEWS_SECTION, ...SECTIONS]
+        : SECTIONS;
   const [activeSection, setActiveSection] = useState<Section | null>("templates");
   const [uploading, setUploading] = useState(false);
   const [bgFit, setBgFit] = useState<"cover" | "contain">("cover");
@@ -481,6 +495,7 @@ export function LeftSidebar() {
                 )}
 
                 {activeSection === "event" && <EventPanel />}
+                {activeSection === "news" && <NewsPanel />}
 
                 {activeSection === "designs" && <DesignList />}
               </div>

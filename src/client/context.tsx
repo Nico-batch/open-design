@@ -3,6 +3,8 @@ import { useContext } from "preact/hooks";
 import type { Design, Template, Page } from "./types";
 import type { EventCopy } from "./lib/event-fields";
 import type { EventLayoutMode, EventTheme } from "./lib/event-template";
+import type { NewsCopy } from "./lib/news-fields";
+import type { NewsVariant } from "./lib/news-template";
 import type * as fabric from "fabric";
 import type { BackgroundEffects, ScrimKind } from "./lib/effects";
 
@@ -78,6 +80,30 @@ export interface EditorContextValue {
       seal?: boolean;
     }
   ) => Promise<EventLayoutMode | null>;
+  /** Compone la plantilla de una noticia sobre un canvas concreto — ver lib/news-template.ts. */
+  composeNewsOnCanvas: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    copy: NewsCopy,
+    opts: { pageWidth: number; pageHeight: number; variant?: NewsVariant; seal?: boolean }
+  ) => Promise<NewsVariant | null>;
+  /** Quita la plantilla y devuelve la página al diseño de siempre (foto a sangre + titular). */
+  revertNewsTemplate: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    title: string,
+    opts: { pageWidth: number; pageHeight: number }
+  ) => Promise<void>;
+  /** Recolorea la plantilla sin recomponerla, así que no pierde los retoques manuales. */
+  setNewsVariantOnCanvas: (canvas: fabric.Canvas, pageId: string, variant: NewsVariant) => void;
+  /** La cifra destacada, que no sale del CRM: la escribe el operador. */
+  setNewsFigureOnCanvas: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    valor: string,
+    unidad: string,
+    opts: { pageWidth: number; pageHeight: number }
+  ) => void;
   getCanvasForPage: (pageId: string) => fabric.Canvas | null;
   getCanvasSize: () => { width: number; height: number };
   updateSelectedObject: (props: Record<string, unknown>) => void;

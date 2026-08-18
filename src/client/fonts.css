@@ -251,6 +251,25 @@
   src: url("/fonts/Merriweather/700.woff2") format("woff2");
 }
 
+/* Barlow Condensed: la sans condensada de la plantilla de noticias. Solo 400 (regular) y
+ * 500 (medio), que son los dos pesos que ese diseño admite. Es la que hace que un titular
+ * de 98 caracteres —lo normal en el CRM— quepa en 3 líneas a 66 px, cosa que ninguna de
+ * las familias de arriba consigue. */
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Barlow-Condensed/400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/Barlow-Condensed/500.woff2") format("woff2");
+}
+
 /* ── Emojis ──────────────────────────────────────────────────────────────────
  * Noto Color Emoji (COLRv1), autoalojado por el mismo motivo que el resto: que el
  * resultado no dependa de la máquina del operador. Sin él, cada sistema pinta su propio

@@ -3,6 +3,7 @@ import * as fabric from "fabric";
 /** Families shipped under `public/fonts/<Family>/<weight>.woff2` (see fonts.css). */
 export const FONT_FAMILIES = [
   "Inter",
+  "Barlow Condensed",
   "Playfair Display",
   "Montserrat",
   "Poppins",

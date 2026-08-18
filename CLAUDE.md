@@ -138,7 +138,7 @@ src/
 │   └── schema.sql    — DDL + seed de templates (SQL estándar, portable)
 └── client/
     ├── main.tsx, app.tsx       — bootstrap Preact; main.tsx importa fonts.css
-    ├── fonts.css               — @font-face autoalojado (generado, 36 caras, subset latin)
+    ├── fonts.css               — @font-face autoalojado (38 caras, subset latin) + emoji
     ├── context.tsx             — EditorContext + CANVAS_SIZES (presets IG)
     ├── types.ts, api.ts        — tipos y fetch al backend
     ├── lib/
@@ -150,7 +150,11 @@ src/
     │   ├── text-styles.ts      — formato por rango de caracteres dentro de un texto (§9.21)
     │   ├── text-effects.ts     — sombra, resplandor, hueco y fondo del texto (§9.24)
     │   ├── enhance.ts          — receta "Mejorar": acabado de noticia local (§9.25)
-    │   └── snapping.ts         — imán de arrastre a las guías de centro, escape con Ctrl (§9.23)
+    │   ├── snapping.ts         — imán de arrastre a las guías de centro, escape con Ctrl (§9.23)
+    │   ├── event-fields.ts     — campos de un evento → texto publicable, fechas (§9.26)
+    │   ├── event-template.ts   — plantilla de eventos: bloques, modos, temas (§9.26/§9.27)
+    │   ├── news-fields.ts      — secciones de una noticia y la cuenta del pie (§9.28)
+    │   └── news-template.ts    — plantilla de noticias: franja, chip, titular, pie (§9.28)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -161,12 +165,15 @@ src/
     └── components/
         ├── editor.tsx, canvas-area.tsx, page-canvas.tsx, pages-bar.tsx
         ├── guides-overlay.tsx      — guías de centro imantadas, capa DOM fuera de Fabric (§9.23)
+        ├── event-panel.tsx         — sección "Evento" del sidebar izquierdo (§9.26)
+        ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
 
 public/
 ├── fonts/<Familia>/<peso>.woff2   — fuentes autoalojadas (servidas por Vite/estático)
-└── logo.png                       — logo de marca (faro blanco, fondo transparente, 500x500)
+└── logo.png                       — logo de marca (faro blanco, fondo transparente, 500x500;
+                                      su colocación depende de la plantilla, ver §9.28)
 
 Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 ```
@@ -365,9 +372,11 @@ con índice único (parcial, solo cuando no es `NULL`) — un diseño por notici
   directamente sobre su propio canvas, encadenada dentro del mismo `.then()` de la carga
   — así queda garantizado el orden sin necesitar ninguna señal/callback nueva entre
   componentes.
-  El título por defecto (heading) **sigue aplicándose solo la primera vez** (página en
+  El título por defecto **sigue aplicándose solo la primera vez** (página en
   blanco, `canvas_json === "{}"`) — solo la imagen se refresca siempre; si el operador ya
-  escribió texto, no se toca. Solo se aplica en la página principal (`pages[0]`) del
+  escribió texto, no se toca. (Desde §9.28 ese "título por defecto" de una noticia ya no
+  es un cuadro de texto suelto sino la plantilla entera; la condición de cuándo se aplica
+  no ha cambiado.) Solo se aplica en la página principal (`pages[0]`) del
   diseño, igual que antes. Verificado con Playwright: tras guardar contenido y refrescar
   la página del navegador, se repiten las llamadas a `GET /api/news/:id` y
   `GET /api/news/:id/image`, el título y una forma añadida a mano se conservan sin
@@ -1743,6 +1752,190 @@ detrás simplemente se descarta.
 Como `descripcion` ya no la usa nadie, se dejó de pedir a Twenty: una llamada más ligera y
 un campo menos que mantener en el tipo.
 
+
+### 9.28 Plantilla automática de noticias
+
+Las noticias tenían el trato de siempre: foto a sangre y el titular como un cuadro de texto
+suelto encima, que había que colocar, dimensionar y hacer legible a mano en cada post (velo,
+sombra, «Mejorar titular»). Ahora se componen solas, con un diseño distinto al de los eventos
+y ya definido por el usuario: **foto arriba, franja de color sólido abajo** con el chip de
+sección, el titular y el pie. El titular no puede superponerse a la foto, así que ese trabajo
+de legibilidad desaparece.
+
+Se aplica sola en la primera apertura, como en eventos, y hay un botón para **volver al
+diseño de siempre**. Los eventos no se tocan.
+
+#### Lo que dicen los datos reales de `news` (verificado por MCP, 658 registros)
+
+- **`categoria` es un enum de cuatro valores** —`ACTUALIDAD`, `DEPORTE`, `CULTURA`,
+  `EDUCACION`— y a veces llega `null` (187 registros). Consecuencia directa: **no existe una
+  sección «Sucesos»**, así que el rojo `#b3261e` de la guía de marca no tiene ningún valor al
+  que aplicarse y se deja fuera.
+- **Los titulares son largos de verdad**: 95-100 caracteres es lo normal. Eso es lo que
+  decide las dos piezas más delicadas del diseño, la tipografía y el alto de la franja.
+- `publicarEn` está casi siempre vacío, y el pie no lleva fecha (decisión del usuario: solo
+  `@elfarodealicante`), así que no hay ninguna regla de zona horaria que mantener aquí.
+- `news` **no tiene `imagenStory`**: una noticia en 1080×1920 cae a `imagenEditada`, que es
+  lo que ya hacía `setRecordEditedImage` (§9.27) — no hizo falta tocar nada.
+
+#### Barlow Condensed, un activo nuevo
+
+`public/fonts/Barlow-Condensed/{400,500}.woff2` (subset latin, OFL, mismo camino que las 36
+caras anteriores) + sus `@font-face` y la familia en `FONT_FAMILIES`, así que también está en
+el desplegable del panel derecho.
+
+No es un capricho de la guía: un titular de 98 caracteres en 952 px no entra en 3 líneas a
+66 px con Inter o Montserrat (≈28 caracteres por línea) y sí con una condensada (≈34). Solo
+los dos pesos que el diseño admite, regular y medio.
+
+#### La franja se dimensiona a partir del contenido
+
+El diseño fija la franja en el 62 % de la altura, el titular entre 96 y 66 px y un máximo de
+3 líneas. Con los titulares reales las tres condiciones no siempre caben a la vez, y el
+usuario eligió qué cede: **la franja crece hacia arriba**.
+
+`layout()` (en [`lib/news-template.ts`](src/client/lib/news-template.ts)) lo resuelve en este
+orden, que es lo que hace que la regla innegociable se cumpla por construcción:
+
+1. Se mide todo lo que no es el titular (chip, cifra, línea, pie) y sus separaciones.
+2. `fitHeadline` elige el **mayor** cuerpo entre 96 y 66 px que quepa en 3 líneas *y* en el
+   hueco que deja la franja en su posición nominal. Las dos condiciones hacen falta: solo con
+   "≤ 3 líneas", un titular corto se quedaría a 96 px empujando la franja muy por encima del
+   62 %; solo con el hueco, uno largo se partiría en cinco líneas.
+3. El contenido se ancla **por abajo** (el pie clavado a 48 px del borde) y la franja se
+   calcula **después**, a partir de lo que ha ocupado: `bandTop = min(62 %, arriba del
+   contenido − 64)`.
+4. La foto se encaja en lo que queda: cover sobre la banda superior, centrada en horizontal y
+   **anclada al tercio alto** (`PHOTO_ANCHOR = 0.25`, se descarta el 75 % del excedente por
+   abajo), que es lo que salva las cabezas en una foto de prensa.
+
+Medido: un titular de 63 caracteres deja la franja en el 62,0 % exacto con el titular a
+82 px; uno de 98 la sube al 59,5 % con el titular a 66 px y 3 líneas. En los dos, margen
+inferior de 48,0 px y ningún bloque por encima del borde de la franja.
+
+#### Marca propia `_nwRole`, no la `_tplRole` de los eventos
+
+Reutilizar la marca de la plantilla de eventos habría sido un bug garantizado:
+`relayoutEventTemplate` corre sobre **todos** los lienzos desde `setCanvasSize` y le basta
+encontrar un objeto con `_tplRole: "title"` para re-apilar la página como si fuera un evento.
+Con propiedades distintas las dos plantillas no pueden interferir, y el registro clase por
+clase repite el mismo cuidado que documenta §9.26 (`Rect` declara su propia
+`customProperties` y **tapa** la de la clase base).
+
+#### El z-order es un tramo contiguo encima de la foto, no un "subir al frente"
+
+La franja es opaca, así que el orden importa más que en la plantilla de eventos. Los bloques
+se mueven a posiciones consecutivas **justo encima de la foto** (`moveObjectTo`) en vez de
+subirlos al frente: subirlos dejaría cualquier objeto que el operador haya añadido a mano por
+*debajo* de la franja, y su trabajo desaparecería al cambiar de formato. Así lo añadido a
+mano se queda arriba, que es lo que cualquiera espera.
+
+#### El logo se deduce de la franja (y se mide por su parte opaca)
+
+El diseño quiere la marca arriba a la izquierda, a 48 px de los dos bordes y con 66 px de
+alto; hoy iba arriba a la derecha. No se puede resolver recolocándola desde la plantilla: la
+capa del logo **no se persiste** (`withoutLogo` la saca de todo lo que se serializa) y
+`applyLogoToCanvas` la reconstruye desde cero al abrir la página y en cada cambio de tamaño.
+
+Por eso `positionLogo` **deduce** la colocación de si el lienzo tiene un objeto con
+`_nwRole === "band"` — la franja sí viaja en el `canvas_json`, así que sobrevive a recargar
+sin guardar nada nuevo. Se lee la propiedad a pelo y no se importa `news-template.ts`, que
+importa `logo.ts` y sería un ciclo.
+
+**Y hubo que medir el logo.** `public/logo.png` es un lienzo de 500×500 en el que el faro
+ocupa 197×324 descentrado, así que pedir 66 px al objeto dejaba el faro en 43 px: en la
+primera prueba era una mancha ilegible en la esquina. `measureOpaqueBounds` mide una vez por
+sesión la parte no transparente y escala y desplaza a partir de ella, de modo que los 66 px y
+el margen de 48 px son los del dibujo. Se mide en vez de anotar los números a mano para que
+siga siendo cierto lo que promete `logo.ts`: cambiar el logo es sustituir el archivo.
+
+La sombra suave del logo se pone **siempre** en esta colocación en vez de solo sobre fotos
+claras. Medir la luminancia de esa esquina es posible (el lienzo no está *tainted*, para eso
+existe el proxy de imágenes) pero añade un caso que se puede equivocar, y una sombra suave
+bajo una marca crema sobre foto oscura no se ve.
+
+#### Las dos variantes, y la única combinación prohibida
+
+|  | navy (por defecto) | crema |
+|---|---|---|
+| franja | `#0a2540` | `#fbf7f0` |
+| titular, pie | `#fbf7f0` | `#0a2540` |
+| chip | ámbar con texto navy | navy con texto crema |
+| cifra | `#f4a825` | `#0a2540` |
+
+La regla que las gobierna es que **ámbar y crema nunca se tocan** (sobre crema el ámbar se
+queda en ~2.5:1), así que en la variante clara el ámbar desaparece del todo y su papel lo hace
+el azul noche.
+
+Cambiar de variante **recolorea lo que ya hay, no recompone**: recomponer volvería a pedir el
+registro a Twenty y descartaría los retoques manuales sobre los textos, que es un precio
+absurdo por cambiar dos colores. Como el modo de los eventos, la variante se deduce del
+lienzo (`_nwVariant`).
+
+#### El dato destacado
+
+La cifra grande no existe como campo en Twenty —los titulares sí traen cifras, pero
+extraerlas dejaría el número dos veces y la unidad habría que adivinarla—, así que la escribe
+el operador en dos casillas del panel. Vacías, el bloque no se crea y el titular sube. Se leen
+de vuelta del lienzo al abrir el panel, para no tener el mismo dato en dos sitios que puedan
+contradecirse. Confirman al perder el foco o con **Enter**.
+
+#### Dónde se engancha
+
+- **`page-canvas.tsx`**: rama simétrica a la de eventos — página en blanco de una noticia →
+  `composeNewsOnCanvas({ seal: true })` + `scheduleSave()`. Lo segundo no es opcional:
+  `saveDesign` ignora las páginas cuyo JSON sea `"{}"`, que es justo la condición de "primera
+  vez", así que sin guardar se recompondría en cada apertura pisando lo editado.
+- **La foto se re-encaja a la banda en los cuatro sitios donde puede volver a la página
+  entera**: el refresco desde Twenty de cada apertura, `setCanvasSize`, `setBackgroundImageFit`
+  (Cover/Contain) y `setBackground` (subir otra foto). Si falta cualquiera, la foto se mete
+  por debajo de la franja — el mismo patrón de §9.18, otra vez.
+- **`DEFAULT_CANVAS_SIZE.news`** pasa de 1080×1080 a **1080×1350**. Solo afecta a diseños
+  nuevos; los borradores de noticia ya creados conservan su tamaño y su contenido, y como no
+  están en blanco tampoco se les compone nada (verificado con un borrador fabricado a mano).
+- **`revertNewsTemplate`** es el botón que pidió el usuario: borra lo marcado, devuelve la
+  foto a cover de página completa, la marca a su esquina y el titular a un cuadro de texto —
+  exactamente el estado con el que nacía una noticia antes. Una entrada de historial, así que
+  `Ctrl+Z` devuelve la plantilla.
+
+#### Verificado contra el build de producción
+
+`:8788` con CSP real (regla de §9.11/§10.3), con Playwright, leyendo el `canvas_json`
+persistido por la API y mirando los PNG exportados, no solo lo que se ve en pantalla:
+
+- Cuatro noticias reales de distinta longitud: cero solapes (medidos par a par), `x = 64` en
+  todos los bloques, margen inferior 48,0 px exacto y ningún bloque por encima del borde de la
+  franja.
+- Sin sección y sin foto (`0ac8e6b8`): el chip no se crea, el titular sube a ocupar su sitio y
+  el lienzo queda en azul de marca en vez de blanco.
+- Las dos variantes cambian franja, chip, titular, línea y pie a la vez.
+- La cifra se pone y se quita: al quitarla el titular vuelve a subir (franja del 46,7 % al
+  59,5 %) y los dos bloques desaparecen del `canvas_json`.
+- Los tres formatos: 1080×1350 → 1080×1920 (franja al 62,0 %, titular a 82 px) → 1080×1080
+  (franja al 49,4 %), con la foto re-encajada a cada banda y el margen inferior siempre en 48.
+- Revertir deja foto 2400×1350 a cover + un `Textbox`, y `Ctrl+Z` devuelve la plantilla entera.
+- Persistencia: abrir dos veces da un `canvas_json` **idéntico**, con una sola franja, una sola
+  foto y un solo titular, y sin `data:image` dentro.
+- Barlow Condensed 400 y 500 llegan a `loaded`.
+- "Guardar en Twenty" completa y escribe en `imagenEditada` (`target=feed`); la escritura de
+  prueba se revirtió a su valor anterior.
+- Sin regresión: un evento abierto en paralelo mantiene su sección, su plantilla y su modo
+  cartel (624×766, proporción 0.814, sin pisar la ficha) y no aparece ninguna marca `_nwRole`;
+  un diseño normal sin CRM sigue con el logo arriba a la derecha y sin sección «Noticia».
+- Sin errores de consola en ningún paso.
+
+#### Límites conocidos
+
+- **El rojo `#b3261e` queda sin usar** — el enum no tiene «Sucesos». Si algún día se añade, es
+  una entrada en `SECTION_LABELS` y otra en la tabla de colores del chip.
+- **«Mejorar foto»** (panel Bg) sigue disponible con la plantilla puesta y añadiría velo y
+  filtros a la fotografía, que es justo lo que este diseño prohíbe. No se bloquea —es decisión
+  del operador— pero conviene saberlo.
+- **Re-encajar la foto a la banda descarta un reencuadre manual** al cambiar de formato, igual
+  que ya ocurría con el fondo de página completa: ese encuadre describía una banda que ya no
+  existe.
+- **`@elfarodealicante` es una constante del código**, no un campo del CRM; el cuadro de texto
+  es editable en el lienzo como cualquier otro.
 
 ## 10. Fase 3 — Seguridad y hardening (completa, nivel app)
 
