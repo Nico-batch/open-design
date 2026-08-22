@@ -251,10 +251,12 @@
   src: url("/fonts/Merriweather/700.woff2") format("woff2");
 }
 
-/* Barlow Condensed: la sans condensada de la plantilla de noticias. Solo 400 (regular) y
- * 500 (medio), que son los dos pesos que ese diseño admite. Es la que hace que un titular
- * de 98 caracteres —lo normal en el CRM— quepa en 3 líneas a 66 px, cosa que ninguna de
- * las familias de arriba consigue. */
+/* Barlow Condensed: la sans condensada de la plantilla de noticias. Es la que hace que un
+ * titular de 98 caracteres —lo normal en el CRM— quepa en 3 líneas a 66 px, cosa que
+ * ninguna de las familias de arriba consigue. 400 (regular) para el pie, 500 (medio) para
+ * el chip, y 600 (semibold) para el titular: desde §9.30 el titular va sobre la foto
+ * desenfocada sin ningún bloque de color detrás, y el peso es la primera de las tres cosas
+ * que lo hacen legible (las otras dos son el desenfoque y la sombra). */
 @font-face {
   font-family: "Barlow Condensed";
   font-style: normal;
@@ -268,6 +270,13 @@
   font-weight: 500;
   font-display: swap;
   src: url("/fonts/Barlow-Condensed/500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/Barlow-Condensed/600.woff2") format("woff2");
 }
 
 /* ── Emojis ──────────────────────────────────────────────────────────────────

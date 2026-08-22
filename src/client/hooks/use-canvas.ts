@@ -44,7 +44,7 @@ import {
   relayoutNewsTemplate,
   clearNewsTemplate,
   applyNewsVariant,
-  setNewsBandOpacity,
+  setNewsBlur,
   setNewsFigure,
   markRecordTitle,
   type NewsVariant,
@@ -825,16 +825,22 @@ export function useCanvasState() {
   );
 
   /**
-   * Ajusta cuánto tapa la franja de la foto desenfocada que tiene detrás.
+   * Ajusta el desenfoque del fondo sobre el que va el texto.
    *
-   * `commit` separa el arrastre del deslizador de su confirmación: mover el control repinta el
-   * lienzo en vivo (es barato, solo recolorea un rectángulo) pero cada píxel de arrastre no
-   * puede ser un paso de deshacer, así que la entrada de historial solo se escribe al soltar.
+   * Solo se aplica al **confirmar** (soltar el deslizador), no en cada píxel del arrastre como
+   * hacía la opacidad: cambiar el desenfoque obliga a volver a filtrar el bitmap entero, que en
+   * una foto de 4096 px se nota. Es el mismo criterio que ya siguen los deslizadores de efectos
+   * del panel Bg (§9.14).
    */
-  const setNewsBandOpacityOnCanvas = useCallback(
-    (canvas: fabric.Canvas, pageId: string, alpha: number, opts?: { commit?: boolean }): void => {
-      if (!setNewsBandOpacity(canvas, alpha)) return;
-      if (opts?.commit) saveHistory(pageId);
+  const setNewsBlurOnCanvas = useCallback(
+    (
+      canvas: fabric.Canvas,
+      pageId: string,
+      blur: number,
+      opts: { pageWidth: number; pageHeight: number }
+    ): void => {
+      if (!setNewsBlur(canvas, blur, opts.pageWidth, opts.pageHeight)) return;
+      saveHistory(pageId);
     },
     [saveHistory]
   );
@@ -1364,7 +1370,7 @@ export function useCanvasState() {
     composeNewsOnCanvas,
     revertNewsTemplate,
     setNewsVariantOnCanvas,
-    setNewsBandOpacityOnCanvas,
+    setNewsBlurOnCanvas,
     setNewsFigureOnCanvas,
     getCanvasForPage,
     getCanvasSize,

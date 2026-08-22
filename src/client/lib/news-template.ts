@@ -8,20 +8,25 @@ import { syncCanvasFonts } from "./fonts";
 import { BRAND } from "./palette";
 
 /**
- * La plantilla fija de un post de noticia: foto arriba, franja translúcida abajo con el chip
- * de sección, el titular y el pie.
+ * La plantilla fija de un post de noticia: **una sola fotografía a página completa**, nítida
+ * arriba y desenfocada abajo, con el chip de sección, el titular y el pie sobre la parte
+ * desenfocada.
  *
- * La diferencia de fondo con la plantilla de eventos (`event-template.ts`) no es estética:
- * ahí el texto va **encima** de la foto, con toda la fotografía compitiendo con él, y el
- * trabajo consiste en apagarla entera (velo, desenfoque, sombra en la letra); aquí el texto
- * vive en su propia franja, así que la fotografía se queda **intacta en la mitad que se ve**
- * —sin filtros ni velos, como exige la guía— y el titular no puede competir con ella por
- * construcción. Por eso las dos plantillas no comparten paleta ni bloques.
+ * No hay ningún bloque de color: la mitad de abajo es la misma foto, sin virar y sin velo.
+ * Y no hay ningún corte entre las dos mitades, que es la razón de ser de todo el diseño —
+ * la copia desenfocada va **exactamente encima de la original, con su misma transformación**,
+ * y aparece con un degradado de alfa (ver `syncGlass` y `fadeMask`), de modo que lo único que
+ * cambia a lo largo de esa transición es la nitidez. Los mismos píxeles, cada vez más suaves.
  *
- * La franja no es opaca: deja ver la foto por detrás, desenfocada, como un cristal
- * esmerilado. Y ese desenfoque **no se aplica a la fotografía**, que sigue limpia: es una
- * copia suya, recortada a la franja (ver `syncGlass`). El color de la franja va encima con
- * la opacidad que mande `readBandOpacity`, que es lo que garantiza el contraste del titular.
+ * De ahí se sigue el resto: sin bloque de color, la legibilidad del texto tiene que salir de
+ * otro sitio, y sale de tres a la vez — el desenfoque (que borra el *detalle* del fondo, que
+ * es lo que de verdad estorba a la lectura), el peso de la letra (Barlow Condensed 600) y una
+ * sombra o un halo bajo la tinta. Cuál de los dos se elige lo decide la propia fotografía:
+ * `chooseInk` mide su luminancia media en la zona del texto.
+ *
+ * Con la plantilla de eventos (`event-template.ts`) comparte ahora la idea —texto sobre foto,
+ * contraste resuelto en la letra— pero no la ejecución: allí la foto se apaga entera con un
+ * velo, aquí se conserva a plena luz en la mitad que se ve y solo se difumina la otra.
  *
  * `news-fields.ts` decide *qué se dice*; este fichero solo decide *dónde se pone*.
  */
@@ -82,7 +87,13 @@ export type NwRole =
   | "rule"
   | "account";
 
-/** `navy` = franja azul noche con tinta crema (por defecto). `cream` = al revés. */
+/**
+ * De qué color va la tinta. Los nombres vienen de cuando la franja era un bloque de color y
+ * se conservan porque están grabados en el `canvas_json` de los borradores ya guardados:
+ * `navy` es la combinación **de tinta clara** (crema sobre foto, con sombra oscura) y `cream`
+ * la de **tinta oscura** (azul noche sobre foto, con halo claro). El panel los llama por lo
+ * que hacen hoy — "Tinta clara" y "Tinta oscura" — no por su clave.
+ */
 export type NewsVariant = "navy" | "cream";
 
 // ── Paleta ──────────────────────────────────────────────────────────
@@ -90,10 +101,12 @@ export type NewsVariant = "navy" | "cream";
 const { navy: NAVY, amber: AMBER, cream: CREAM } = BRAND;
 
 interface Palette {
-  /** Color de la franja. Se pinta con alfa (ver `DEFAULT_BAND_ALPHA`), nunca opaco. */
-  band: string;
   /** Titular y pie. */
   ink: string;
+  /** Sombra o halo bajo la tinta: es lo que despega el texto de la foto. */
+  shadow: string;
+  /** Una sombra proyectada se desplaza; un halo tiene que quedarse centrado en la letra. */
+  shadowOffset: boolean;
   chipFill: string;
   chipInk: string;
   /** La cifra destacada. */
@@ -101,41 +114,69 @@ interface Palette {
 }
 
 /**
- * Las dos variantes. La regla que las gobierna —y la única combinación de la paleta que está
- * prohibida— es que **ámbar y crema nunca se tocan**: sobre crema, el ámbar se queda en
- * ~2.5:1 de contraste. Por eso en la variante clara el ámbar desaparece por completo y su
- * papel (chip, cifra) lo hace el azul noche.
+ * Las dos variantes.
+ *
+ * Ya no cambian el color de ningún bloque —desde §9.30 no hay ninguno: el texto va
+ * directamente sobre la fotografía desenfocada— sino **de qué lado está el contraste**, que es
+ * el mismo criterio que gobierna los dos temas de la plantilla de eventos (§9.27). Con tinta
+ * clara lo que separa la letra del fondo es una sombra oscura; con tinta oscura esa sombra
+ * ensuciaría el texto y hace falta lo contrario, un halo claro sin desplazamiento.
+ *
+ * La regla de la paleta sigue en pie: **ámbar y crema nunca se tocan** (sobre crema el ámbar
+ * se queda en ~2.5:1), así que con tinta oscura el ámbar desaparece y su papel lo hace el azul
+ * noche.
  */
 const PALETTES: Record<NewsVariant, Palette> = {
-  navy: { band: NAVY, ink: CREAM, chipFill: AMBER, chipInk: NAVY, figure: AMBER },
-  cream: { band: CREAM, ink: NAVY, chipFill: NAVY, chipInk: CREAM, figure: NAVY },
+  navy: {
+    ink: CREAM,
+    shadow: "rgba(0,0,0,0.62)",
+    shadowOffset: true,
+    chipFill: AMBER,
+    chipInk: NAVY,
+    figure: AMBER,
+  },
+  cream: {
+    ink: NAVY,
+    shadow: "rgba(251,247,240,0.9)",
+    shadowOffset: false,
+    chipFill: NAVY,
+    chipInk: CREAM,
+    figure: NAVY,
+  },
 };
 
-/** Opacidades que la guía da sobre el color de tinta. */
-const UNIT_ALPHA = 0.72;
-const RULE_ALPHA = 0.22;
-const ACCOUNT_ALPHA = 0.68;
+/**
+ * Opacidades sobre el color de tinta.
+ *
+ * Más altas que las que daba la guía original (0.72 / 0.22 / 0.68): aquellas se eligieron
+ * contra un bloque de color liso, y sobre una fotografía —aunque esté desenfocada— un texto al
+ * 68 % se deshace. La jerarquía se mantiene, solo que comprimida hacia arriba.
+ */
+const UNIT_ALPHA = 0.9;
+const RULE_ALPHA = 0.45;
+const ACCOUNT_ALPHA = 0.88;
 
 /**
- * Cuánto cubre la franja de la foto desenfocada que tiene detrás.
+ * Cuánto se desenfoca la copia de la fotografía sobre la que va el texto.
  *
- * La variante clara necesita más cuerpo que la oscura, y no por gusto: debajo hay una
- * fotografía que normalmente es más oscura que el crema, así que con el mismo alfa la franja
- * clara se ensucia y el titular azul noche pierde contraste antes. El operador puede bajar
- * las dos desde el panel — `BAND_ALPHA_MIN` es el suelo, elegido para que el titular siga
- * legible sobre cualquier foto.
+ * Es la primera de las tres cosas que hacen legible el titular ahora que no hay ningún bloque
+ * de color debajo (las otras dos son el peso de la letra y la sombra), y es la más importante:
+ * lo que estorba a la lectura no es el brillo del fondo sino su **detalle**, y un desenfoque
+ * fuerte lo elimina dejando el color de la foto intacto. Por eso el valor por defecto es alto
+ * y el deslizador del panel llega hasta más.
  */
-const DEFAULT_BAND_ALPHA: Record<NewsVariant, number> = { navy: 0.82, cream: 0.86 };
-export const BAND_ALPHA_MIN = 0.5;
+const DEFAULT_BLUR = 0.45;
+export const BLUR_MIN = 0.15;
+export const BLUR_MAX = 0.8;
 
 /**
- * Cuánto se desenfoca la copia de la foto que se ve a través de la franja.
+ * Altura de la transición entre la foto nítida y la desenfocada, como fracción de la página.
  *
- * Es el mismo valor con el que la plantilla de eventos difumina el fondo de su modo cartel:
- * suficiente para que ninguna forma reconocible compita con el titular, y no tanto como para
- * que el color deje de ser el de la foto.
+ * Es lo que hace que no se vea ningún corte: en vez de un borde donde acaba una y empieza la
+ * otra, la copia desenfocada aparece con un degradado de alfa a lo largo de ~135 px (en una
+ * página de 1350), de modo que el desenfoque *crece* en vez de encenderse.
  */
-const GLASS_BLUR = 0.3;
+const FADE_RATIO = 0.1;
 
 function withAlpha(hex: string, alpha: number): string {
   const color = new fabric.Color(hex);
@@ -190,6 +231,9 @@ const FAMILY = "Barlow Condensed";
 /** Los dos únicos pesos que admite la guía. */
 const REGULAR = "400";
 const MEDIUM = "500";
+/** El titular. Desde §9.30 va sobre la foto sin ningún bloque detrás, y el peso es lo primero
+ *  que lo despega de ella: a 500 se deshacía sobre cualquier fondo con textura. */
+const SEMIBOLD = "600";
 
 /**
  * Cuánto del excedente vertical de la foto se recorta por arriba. La guía pide un recorte
@@ -206,6 +250,26 @@ const PHOTO_ANCHOR = 0.25;
  * y como las dos usan la misma cara el error se cancela salvo por la diferencia de cuerpo.
  */
 const BASELINE_RATIO = 0.78;
+
+/**
+ * La sombra (o el halo) que separa la letra de la fotografía.
+ *
+ * Proporcional al cuerpo, para que valga igual en el titular y en el pie. Con tinta clara es
+ * una sombra oscura ligeramente desplazada; con tinta oscura, un halo claro **sin desplazar**
+ * y más difuminado — un halo desplazado se lee como una sombra mal hecha, no como un contorno.
+ *
+ * `affectStroke` no hace falta aquí porque este texto nunca lleva contorno: la sombra es
+ * suficiente y un contorno grueso sobre una condensada estrecha embarra las letras.
+ */
+function inkShadow(fontSize: number, variant: NewsVariant): fabric.Shadow {
+  const p = PALETTES[variant];
+  return new fabric.Shadow({
+    color: p.shadow,
+    blur: Math.round(fontSize * (p.shadowOffset ? 0.3 : 0.36)),
+    offsetX: 0,
+    offsetY: p.shadowOffset ? Math.round(fontSize * 0.055) : 0,
+  });
+}
 
 /** El tracking de la guía viene en píxeles; `charSpacing` de Fabric va en 1/1000 em. */
 function tracking(px: number, fontSize: number): number {
@@ -231,37 +295,6 @@ export function hasNewsTemplate(canvas: fabric.Canvas): boolean {
 export function currentVariant(canvas: fabric.Canvas): NewsVariant {
   const marked = canvas.getObjects().find((o) => (o as any)._nwVariant);
   return ((marked as any)?._nwVariant as NewsVariant) ?? "navy";
-}
-
-/**
- * La opacidad de la franja, leída del alfa de su propio relleno — igual que la variante y el
- * modo de los eventos, se deduce del lienzo en vez de guardarse en un segundo sitio que pueda
- * contradecirlo. Mismo `match` sobre `rgba(...)` que usa `readScrim` en `effects.ts`.
- */
-export function readBandOpacity(canvas: fabric.Canvas, variant?: NewsVariant): number {
-  const fallback = DEFAULT_BAND_ALPHA[variant ?? currentVariant(canvas)];
-  const band = findByRole(canvas, "band") as fabric.Rect | undefined;
-  const fill = band?.fill;
-  if (typeof fill !== "string") return fallback;
-  const m = fill.match(/rgba?\([^)]*,\s*([\d.]+)\s*\)/);
-  return m ? parseFloat(m[1]) : fallback;
-}
-
-/**
- * Cambia la opacidad de la franja. No re-maqueta: la geometría no depende del color.
- *
- * Devuelve `false` si esta página no tiene plantilla.
- */
-export function setNewsBandOpacity(canvas: fabric.Canvas, alpha: number): boolean {
-  const band = findByRole(canvas, "band") as fabric.Rect | undefined;
-  if (!band) return false;
-  const variant = ((band as any)._nwVariant as NewsVariant) ?? "navy";
-  band.set({ fill: withAlpha(PALETTES[variant].band, alpha) });
-  // `set` sobre un relleno no marca el objeto como sucio, así que Fabric volvería a estampar
-  // el bitmap cacheado con el color viejo (§9.21).
-  band.dirty = true;
-  canvas.requestRenderAll();
-  return true;
 }
 
 /** La cifra destacada tal como está en el lienzo, para que el panel no tenga que guardarla
@@ -310,6 +343,8 @@ function makeText(
     width: number;
     charSpacing?: number;
     lineHeight?: number;
+    /** `false` para el texto que ya va sobre un fondo opaco propio (el chip). */
+    shadow?: false;
   }
 ): fabric.Textbox {
   const box = new fabric.Textbox(text, {
@@ -321,9 +356,10 @@ function makeText(
     textAlign: "left",
     charSpacing: opts.charSpacing ?? 0,
     lineHeight: opts.lineHeight ?? 1,
-    // Ni sombra, ni contorno, ni degradado: la guía los prohíbe expresamente en el texto, y
-    // aquí no hacen falta porque el contraste lo da la franja, no la letra.
-    shadow: null,
+    // Sin contorno y sin degradado, como pedía la guía; la sombra, en cambio, dejó de ser
+    // opcional en §9.30: es lo que separa la letra de la foto ahora que no hay bloque de
+    // color. El chip es la excepción — va sobre su propia píldora opaca.
+    shadow: opts.shadow === false ? null : inkShadow(opts.fontSize, variant),
     editable: true,
   });
   return mark(box, role, variant);
@@ -342,21 +378,18 @@ function makeRect(role: NwRole, variant: NewsVariant, fill: string, extra?: Part
   return mark(rect, role, variant);
 }
 
-function buildBlocks(
-  copy: NewsCopy,
-  pageWidth: number,
-  variant: NewsVariant,
-  bandAlpha: number
-): Built {
+function buildBlocks(copy: NewsCopy, pageWidth: number, variant: NewsVariant): Built {
   const s = pageWidth / REF_WIDTH;
   const p = PALETTES[variant];
   const usable = pageWidth - 2 * D.padSide * s;
 
   const built: Built = {
-    band: makeRect("band", variant, withAlpha(p.band, bandAlpha)),
+    // Sin relleno: desde §9.30 la "franja" no pinta nada, es solo el ancla de la
+    // maquetación y la señal por la que `logo.ts` coloca la marca arriba a la izquierda.
+    band: makeRect("band", variant, "rgba(0,0,0,0)"),
     headline: makeText(copy.titular, "headline", variant, {
       fontSize: D.headlineMax * s,
-      fontWeight: MEDIUM,
+      fontWeight: SEMIBOLD,
       fill: p.ink,
       width: usable,
       charSpacing: tracking(D.headlineTracking, D.headlineMax),
@@ -382,13 +415,15 @@ function buildBlocks(
       fill: p.chipInk,
       width: usable,
       charSpacing: tracking(D.chipTracking, D.chipSize),
+      // Va sobre su propia píldora opaca: una sombra ahí solo ensuciaría el borde.
+      shadow: false,
     });
   }
 
   if (copy.dato) {
     built.figure = makeText(copy.dato, "figure", variant, {
       fontSize: D.figureSize * s,
-      fontWeight: MEDIUM,
+      fontWeight: SEMIBOLD,
       fill: p.figure,
       width: usable,
       charSpacing: tracking(D.figureTracking, D.figureSize),
@@ -541,14 +576,22 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
   built.account.setCoords();
 
   // La foto primero, que además la manda al fondo: así el índice base de abajo es fiable.
-  fitPhotoToBand(canvas, pageWidth, bandTop);
-  // Y su copia desenfocada, recortada a la franja recién colocada. Va aquí, dentro de
-  // `layout`, para que las cinco rutas que mueven la franja o cambian la foto la actualicen
-  // sin tener que acordarse de ella (ver el comentario de `syncGlass`).
-  syncGlass(canvas, pageWidth, pageHeight, bandTop, ((built.band as any)._nwVariant as NewsVariant) ?? "navy");
+  fitPhotoToPage(canvas, pageWidth, pageHeight);
+  // Y su copia desenfocada. Va aquí, dentro de `layout`, para que las cinco rutas que mueven
+  // el borde del desenfoque o cambian la foto la actualicen sin tener que acordarse de ella
+  // (ver el comentario de `syncGlass`).
+  syncGlass(canvas, pageWidth, pageHeight, bandTop, readBlur(canvas));
 
-  // Orden interno de la plantilla: el cristal va sobre la foto, la franja sobre el cristal y
-  // el resto encima, en el orden del diseño.
+
+  // La "franja" ya no pinta nada: desde §9.30 es solo el ancla de la maquetación (y la señal
+  // por la que `logo.ts` sabe que tiene que colocar la marca arriba a la izquierda). Se fuerza
+  // transparente en cada pasada, que es lo que migra sola a los borradores guardados cuando la
+  // franja sí era un bloque de color.
+  built.band.set({ fill: "rgba(0,0,0,0)" });
+  built.band.dirty = true;
+
+  // Orden interno de la plantilla: el cristal va sobre la foto y el texto encima, en el orden
+  // del diseño.
   //
   // Se mueven a un tramo contiguo **justo encima de la foto** en vez de subirlos al frente.
   // Subirlos dejaría cualquier objeto que el operador haya añadido a mano por *debajo* de la
@@ -563,35 +606,54 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
     index++;
   }
 
+  // Las sombras son proporcionales al cuerpo de letra, y el cuerpo lo acaba de decidir
+  // `fitHeadline` (y lo reinicia `relayoutNewsTemplate` en cada cambio de formato), así que se
+  // rehacen aquí, en el único punto por el que pasan todas las rutas.
+  refreshShadows(built);
+
   bringLogoToFront(canvas);
   return { bandTop };
 }
 
+/** Rehace la sombra de cada texto contra su cuerpo y su variante actuales. */
+function refreshShadows(built: Built): void {
+  for (const box of [built.figure, built.unit, built.headline, built.account]) {
+    if (!box) continue;
+    const variant = ((box as any)._nwVariant as NewsVariant) ?? "navy";
+    box.set({ shadow: inkShadow(box.fontSize ?? 48, variant) });
+    box.dirty = true;
+  }
+}
+
 /**
- * Encaja la foto en la banda superior: cover sobre `pageWidth × bandTop`, centrada en
+ * Encaja la foto en la **página entera**: cover sobre `pageWidth × pageHeight`, centrada en
  * horizontal y anclada al tercio alto en vertical (ver PHOTO_ANCHOR).
  *
- * No se reutiliza `fitBackgroundImage` de `use-canvas.ts` porque esa encaja contra la página
- * entera y centra el recorte, que es exactamente lo que la guía descarta.
+ * Hasta §9.30 se encajaba solo contra la banda superior, porque debajo iba un bloque opaco y
+ * lo que quedara tapado daba igual. Ahora la mitad de abajo **es la misma foto**, así que
+ * tiene que llegar hasta el borde inferior o no habría nada que desenfocar.
+ *
+ * No se reutiliza `fitBackgroundImage` de `use-canvas.ts` porque esa centra el recorte
+ * vertical, y aquí interesa descartarlo casi todo por abajo: es lo que salva las cabezas en
+ * una foto de prensa.
  */
-export function fitPhotoToBand(canvas: fabric.Canvas, pageWidth: number, bandTop: number): void {
+export function fitPhotoToPage(canvas: fabric.Canvas, pageWidth: number, pageHeight: number): void {
   const img = findBackgroundImage(canvas);
   if (!img) return;
   const natW = img.width || 1;
   const natH = img.height || 1;
-  const scale = Math.max(pageWidth / natW, bandTop / natH);
-  const overflowY = natH * scale - bandTop;
+  const scale = Math.max(pageWidth / natW, pageHeight / natH);
   img.set({
     scaleX: scale,
     scaleY: scale,
     left: (pageWidth - natW * scale) / 2,
-    top: -overflowY * PHOTO_ANCHOR,
+    top: -(natH * scale - pageHeight) * PHOTO_ANCHOR,
   });
   img.setCoords();
   canvas.sendObjectToBack(img);
 }
 
-// ── Cristal: la foto desenfocada que se ve a través de la franja ────
+// ── Cristal: la misma foto, desenfocada, sin costura ────────────
 
 /** El `src` con el que se construyó una imagen, sea cual sea el camino por el que llegó. */
 function sourceUrl(img: fabric.FabricImage): string {
@@ -599,32 +661,76 @@ function sourceUrl(img: fabric.FabricImage): string {
 }
 
 /**
- * Crea, actualiza o quita la copia desenfocada de la foto que se ve por debajo de la franja.
+ * La máscara que hace que no se vea ningún corte.
+ *
+ * Es una **imagen** y no un rectángulo, y ahí está todo el asunto: Fabric dibuja un `clipPath`
+ * con `drawObject(ctx, forClipping = true)`, que **fuerza el relleno a negro opaco**
+ * (`_setClippingProperties`), así que un degradado en el `fill` de un `Rect` se pierde y la
+ * máscara sale opaca de borde a borde. Una `FabricImage`, en cambio, se pinta con `drawImage`
+ * y conserva el alfa de sus propios píxeles — y como el recorte se aplica con
+ * `globalCompositeOperation = destination-in`, ese alfa se traduce en transparencia real.
+ *
+ * De modo que la copia desenfocada no *empieza* en una línea: va apareciendo a lo largo del
+ * degradado, mezclándose con la foto nítida que tiene justo debajo. Como las dos son la misma
+ * imagen en la misma posición, la mezcla no duplica nada: lo único que cambia es la nitidez.
+ */
+function fadeMask(
+  pageWidth: number,
+  fadeTop: number,
+  fadeHeight: number,
+  pageHeight: number
+): fabric.FabricImage | null {
+  // El degradado solo varía en vertical, así que basta 1 px de ancho; la altura da la
+  // resolución de la rampa y 512 sobra para cualquiera de los tres formatos.
+  const RAMP = 512;
+  const el = document.createElement("canvas");
+  el.width = 1;
+  el.height = RAMP;
+  const ctx = el.getContext("2d");
+  if (!ctx) return null;
+  const total = pageHeight - fadeTop;
+  if (total <= 0) return null;
+  // Dónde acaba la rampa dentro de la máscara, en fracción de su altura.
+  const stop = Math.min(1, fadeHeight / total);
+  const grad = ctx.createLinearGradient(0, 0, 0, RAMP);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(stop, "rgba(0,0,0,1)");
+  grad.addColorStop(1, "rgba(0,0,0,1)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 1, RAMP);
+
+  const mask = new fabric.FabricImage(el, { left: 0, top: fadeTop });
+  mask.set({ scaleX: pageWidth, scaleY: total / RAMP });
+  mask.absolutePositioned = true;
+  return mask;
+}
+
+/**
+ * Crea, actualiza o quita la copia desenfocada de la foto.
  *
  * Se construye **de forma síncrona** desde el mismo elemento de la foto, en vez de con
  * `clone()` (que es lo que hace el cartel de los eventos): así cabe dentro de `layout()`, que
- * es síncrona y es el único punto por el que pasan las cinco rutas que pueden mover la franja
- * o cambiar la foto. Un `clone()` obligaría a repetir el refresco en cada una de ellas, que es
- * exactamente el error que §9.18 costó cuatro sitios encontrar.
+ * es síncrona y es el único punto por el que pasan las cinco rutas que pueden mover el borde
+ * del desenfoque o cambiar la foto. Un `clone()` obligaría a repetir el refresco en cada una
+ * de ellas, que es exactamente el error que §9.18 costó cuatro sitios encontrar.
  *
- * Geometría: la misma escala y el mismo `left` que la foto de arriba, anclada al borde
- * inferior de la página. La franja enseña así la continuación de la misma fotografía, al mismo
- * zoom y con el mismo encuadre horizontal, en vez de un recorte a otra escala que se lee como
- * una segunda imagen.
+ * Geometría: **exactamente la misma que la foto** —misma escala, mismo `left`, mismo `top`—,
+ * porque cualquier diferencia se vería como una segunda imagen asomando por debajo. Lo único
+ * que la separa de la original es el filtro y la máscara.
  */
 function syncGlass(
   canvas: fabric.Canvas,
   pageWidth: number,
   pageHeight: number,
   bandTop: number,
-  variant: NewsVariant
+  blur: number
 ): void {
   const photo = findBackgroundImage(canvas);
   const existing = findByRole(canvas, "glass") as fabric.FabricImage | undefined;
 
   if (!photo) {
-    // Sin foto no hay nada que ver a través de la franja; dejarla sería un rectángulo con la
-    // última imagen que hubo, congelada.
+    // Sin foto no hay nada que desenfocar; dejar el cristal sería congelar la última imagen
+    // que hubo, ya sin la original debajo.
     if (existing) canvas.remove(existing);
     return;
   }
@@ -632,14 +738,15 @@ function syncGlass(
   const src = sourceUrl(photo);
   let glass = existing;
 
-  // Re-filtrar un bitmap de 4096 px es lo caro de todo esto, y mover la franja no lo necesita:
-  // solo se reconstruye si la foto ha cambiado (o si no había cristal todavía).
-  if (!glass || sourceUrl(glass) !== src) {
-    if (glass) canvas.remove(glass);
+  // Re-filtrar un bitmap de 4096 px es lo caro de todo esto, y mover el borde del desenfoque
+  // no lo necesita: solo se reconstruye si ha cambiado la foto o la intensidad del filtro.
+  const currentBlur = (glass?.filters?.[0] as fabric.filters.Blur | undefined)?.blur;
+  if (!glass || sourceUrl(glass) !== src || currentBlur !== blur) {
     // `_originalElement` y no `getElement()`: este último devuelve el bitmap ya filtrado en
     // cuanto la imagen lleva efectos, y desenfocar eso encadenaría filtros sobre filtros.
     const el = (photo as any)._originalElement as HTMLImageElement | HTMLCanvasElement | undefined;
     if (!el) return;
+    if (glass) canvas.remove(glass);
     glass = new fabric.FabricImage(el, {
       selectable: false,
       evented: false,
@@ -651,36 +758,78 @@ function syncGlass(
     // Normalmente no hace nada —la foto ya llega reducida— pero si el elemento pasara de
     // 4096 px el desenfoque borraría todo lo que sobresale, en silencio (§9.18).
     downscaleOversizedSource(glass);
-    glass.filters = [new fabric.filters.Blur({ blur: GLASS_BLUR })];
+    glass.filters = [new fabric.filters.Blur({ blur })];
     glass.applyFilters();
     canvas.add(glass);
   }
 
-  mark(glass, "glass", variant);
+  mark(glass, "glass", currentVariant(canvas));
 
-  // Misma escala que la foto, anclada abajo. `fitPhotoToBand` deja siempre la foto con al
-  // menos el alto de la banda superior, que es mayor que el de la franja, así que en la
-  // práctica cubre; el `max` cubre el caso degenerado (una foto en la que no fuera cierto)
-  // subiendo la escala lo justo para tapar la franja.
-  const natW = glass.width || 1;
-  const natH = glass.height || 1;
-  const bandHeight = pageHeight - bandTop;
-  const scale = Math.max(photo.scaleX ?? 1, bandHeight / natH, pageWidth / natW);
   glass.set({
-    scaleX: scale,
-    scaleY: scale,
-    left: scale === (photo.scaleX ?? 1) ? (photo.left ?? 0) : (pageWidth - natW * scale) / 2,
-    top: pageHeight - natH * scale,
+    scaleX: photo.scaleX ?? 1,
+    scaleY: photo.scaleY ?? 1,
+    left: photo.left ?? 0,
+    top: photo.top ?? 0,
   });
-  // El recorte se rehace siempre: la franja cambia de altura con el titular y con el formato.
-  glass.clipPath = new fabric.Rect({
-    left: 0,
-    top: bandTop,
-    width: pageWidth,
-    height: bandHeight,
-    absolutePositioned: true,
-  });
+  // La máscara se rehace siempre: el borde del desenfoque se mueve con el titular y con el
+  // formato. Arranca por encima de `bandTop` para que el desenfoque ya esté al 100 % cuando
+  // empieza el texto, que va 64 px más abajo.
+  const fade = Math.round(pageHeight * FADE_RATIO);
+  glass.clipPath = fadeMask(pageWidth, Math.max(0, bandTop - fade), fade, pageHeight) ?? undefined;
   glass.setCoords();
+}
+
+/** La intensidad de desenfoque vigente, leída del propio filtro del cristal. */
+export function readBlur(canvas: fabric.Canvas): number {
+  const glass = findByRole(canvas, "glass") as fabric.FabricImage | undefined;
+  const blur = (glass?.filters?.[0] as fabric.filters.Blur | undefined)?.blur;
+  return typeof blur === "number" ? blur : DEFAULT_BLUR;
+}
+
+/**
+ * Elige la tinta midiendo la fotografía en la zona donde va a ir el texto.
+ *
+ * Sin bloque de color detrás, el acierto o el fallo de la legibilidad se decide aquí: sobre
+ * una foto oscura hace falta tinta clara, y sobre una clara, oscura. Se mide el **original sin
+ * filtrar** y no el cristal, porque el desenfoque no cambia la luminancia media y el original
+ * está disponible siempre; y se mide a resolución mínima (un `drawImage` a 24×12) porque lo
+ * que interesa es la media, no el detalle.
+ *
+ * Leer píxeles exige que el lienzo no esté *tainted*: se cumple porque la foto llega por el
+ * proxy `/api/twenty/:type/:id/image`, que existe precisamente para esto (§9.3).
+ */
+function chooseInk(photo: fabric.FabricImage, pageHeight: number, bandTop: number): NewsVariant {
+  const el = (photo as any)._originalElement as HTMLImageElement | HTMLCanvasElement | undefined;
+  if (!el) return "navy";
+  const scale = photo.scaleY ?? 1;
+  const top = photo.top ?? 0;
+  // La franja del bitmap que cae bajo la zona de texto.
+  const srcTop = Math.max(0, (bandTop - top) / scale);
+  const srcBottom = Math.min(photo.height || 1, (pageHeight - top) / scale);
+  if (srcBottom <= srcTop) return "navy";
+
+  try {
+    const probe = document.createElement("canvas");
+    probe.width = 24;
+    probe.height = 12;
+    const ctx = probe.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return "navy";
+    ctx.drawImage(el, 0, srcTop, photo.width || 1, srcBottom - srcTop, 0, 0, 24, 12);
+    const d = ctx.getImageData(0, 0, 24, 12).data;
+    let lum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      lum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    }
+    lum /= d.length / 4;
+    // El umbral está alto a propósito: las dos tintas no son simétricas. La crema con sombra
+    // oscura aguanta un fondo medio mucho mejor que el azul noche con halo claro, así que solo
+    // se pasa a tinta oscura cuando la foto es de verdad luminosa.
+    return lum > 165 ? "cream" : "navy";
+  } catch {
+    // Un lienzo *tainted* (una foto que no venga del proxy) lanza aquí. La tinta clara es la
+    // opción que menos se equivoca a ciegas.
+    return "navy";
+  }
 }
 
 // ── Composición ─────────────────────────────────────────────────────
@@ -688,9 +837,8 @@ function syncGlass(
 export interface ComposeNewsOptions {
   pageWidth: number;
   pageHeight: number;
+  /** Si no se da, la elige `chooseInk` midiendo la propia fotografía. */
   variant?: NewsVariant;
-  /** Opacidad de la franja, 0–1. Por defecto, la de la variante. */
-  bandAlpha?: number;
 }
 
 /**
@@ -703,10 +851,17 @@ export async function composeNewsTemplate(
   opts: ComposeNewsOptions
 ): Promise<NewsVariant> {
   const { pageWidth, pageHeight } = opts;
-  const variant = opts.variant ?? "navy";
-  // Rehacer la plantilla conserva la opacidad que el operador hubiera elegido: es un ajuste
+  // Rehacer la plantilla conserva el desenfoque que el operador hubiera elegido: es un ajuste
   // suyo sobre el diseño, no un dato del registro que haya que volver a leer de Twenty.
-  const bandAlpha = opts.bandAlpha ?? readBandOpacity(canvas, variant);
+  const blur = readBlur(canvas);
+  // La tinta se decide contra la foto, y hay que hacerlo **antes** de construir los bloques
+  // porque de ella dependen todos sus colores. `bandTop` todavía no existe —lo calcula
+  // `layout`—, así que se usa su posición nominal: la medida es una media de la mitad baja de
+  // la fotografía y no cambia porque el borde real acabe unas decenas de píxeles más arriba.
+  const photo = findBackgroundImage(canvas);
+  const variant =
+    opts.variant ??
+    (photo ? chooseInk(photo, pageHeight, Math.round(pageHeight * D.bandTopRatio)) : "navy");
   clearNewsTemplate(canvas);
   // El titular suelto que el editor pone al abrir el registro lo sustituye el de la franja.
   for (const obj of canvas.getObjects()) {
@@ -726,7 +881,7 @@ export async function composeNewsTemplate(
     canvas.backgroundColor = NAVY;
   }
 
-  const built = buildBlocks(copy, pageWidth, variant, bandAlpha);
+  const built = buildBlocks(copy, pageWidth, variant);
   for (const obj of [built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
     if (obj) canvas.add(obj);
   }
@@ -813,14 +968,6 @@ export function applyNewsVariant(canvas: fabric.Canvas, variant: NewsVariant): b
   if (!built) return false;
   const p = PALETTES[variant];
 
-  // Se conserva la opacidad que el operador hubiera puesto —mismo criterio que `setScrim` con
-  // el tono del velo (§9.27)— salvo que siguiera en el valor por defecto de la variante que
-  // deja, en cuyo caso pasa al de la nueva: las dos no cubren igual (ver DEFAULT_BAND_ALPHA).
-  const previous = ((built.band as any)._nwVariant as NewsVariant) ?? "navy";
-  const current = readBandOpacity(canvas, previous);
-  const alpha = current === DEFAULT_BAND_ALPHA[previous] ? DEFAULT_BAND_ALPHA[variant] : current;
-
-  built.band.set({ fill: withAlpha(p.band, alpha) });
   built.headline.set({ fill: p.ink });
   built.rule.set({ fill: withAlpha(p.ink, RULE_ALPHA) });
   built.account.set({ fill: withAlpha(p.ink, ACCOUNT_ALPHA) });
@@ -839,6 +986,32 @@ export function applyNewsVariant(canvas: fabric.Canvas, variant: NewsVariant): b
     // volvería a estampar el bitmap cacheado con el color viejo (§9.21).
     obj.dirty = true;
   }
+  // Y la sombra cambia de sentido con la tinta: oscura y desplazada bajo la crema, halo claro
+  // y centrado bajo el azul noche. Va después del bucle, que es quien pone `_nwVariant`.
+  refreshShadows(built);
+  canvas.requestRenderAll();
+  return true;
+}
+
+/**
+ * Cambia la intensidad del desenfoque del fondo.
+ *
+ * No re-maqueta: la geometría no depende del filtro. Sí reconstruye el cristal, porque
+ * cambiar el desenfoque obliga a volver a filtrar el bitmap.
+ */
+export function setNewsBlur(
+  canvas: fabric.Canvas,
+  blur: number,
+  pageWidth: number,
+  pageHeight: number
+): boolean {
+  const built = collect(canvas);
+  if (!built) return false;
+  syncGlass(canvas, pageWidth, pageHeight, built.band.top ?? 0, blur);
+  // `syncGlass` añade el cristal al final de la pila; devolverlo justo encima de la foto.
+  const glass = findByRole(canvas, "glass");
+  const photo = findBackgroundImage(canvas);
+  if (glass) canvas.moveObjectTo(glass, photo ? 1 : 0);
   canvas.requestRenderAll();
   return true;
 }
@@ -879,7 +1052,7 @@ export function setNewsFigure(
     } else {
       built.figure = makeText(value, "figure", variant, {
         fontSize: D.figureSize * s,
-        fontWeight: MEDIUM,
+        fontWeight: SEMIBOLD,
         fill: p.figure,
         width: usable,
         charSpacing: tracking(D.figureTracking, D.figureSize),

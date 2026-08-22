@@ -7,8 +7,9 @@ import {
   currentVariant,
   hasNewsTemplate,
   readNewsFigure,
-  readBandOpacity,
-  BAND_ALPHA_MIN,
+  readBlur,
+  BLUR_MIN,
+  BLUR_MAX,
   type NewsVariant,
 } from "../lib/news-template";
 import type { NewsFields, TwentyRecord } from "../types";
@@ -21,18 +22,20 @@ import type { NewsFields, TwentyRecord } from "../types";
  * contesta desde el editor, sin abrir Twenty en otra pestaña.
  */
 
+// Las claves (`navy`, `cream`) vienen de cuando la franja era un bloque de color y siguen
+// grabadas en los borradores guardados; lo que el operador ve es lo que hacen hoy.
 const VARIANTS: { key: NewsVariant; label: string; hint: string; swatch: string }[] = [
   {
     key: "navy",
-    label: "Navy",
-    hint: "Franja azul noche con titular crema y chip ámbar. Es la variante por defecto y la que mejor funciona con una foto cualquiera.",
-    swatch: "#0a2540",
+    label: "Tinta clara",
+    hint: "Titular crema con sombra oscura y chip ámbar. Es lo que funciona sobre una foto normal o oscura.",
+    swatch: "#fbf7f0",
   },
   {
     key: "cream",
-    label: "Crema",
-    hint: "Franja crema con titular azul noche. Para piezas de servicio o resúmenes. El ámbar desaparece: sobre crema no tiene contraste suficiente.",
-    swatch: "#fbf7f0",
+    label: "Tinta oscura",
+    hint: "Titular azul noche con halo claro, para fotos muy luminosas. El ámbar desaparece: sobre un fondo claro no tiene contraste suficiente.",
+    swatch: "#0a2540",
   },
 ];
 
@@ -44,7 +47,7 @@ export function NewsPanel() {
     composeNewsOnCanvas,
     revertNewsTemplate,
     setNewsVariantOnCanvas,
-    setNewsBandOpacityOnCanvas,
+    setNewsBlurOnCanvas,
     setNewsFigureOnCanvas,
     canvasWidth,
     canvasHeight,
@@ -55,7 +58,10 @@ export function NewsPanel() {
   const [copy, setCopy] = useState<NewsCopy | null>(null);
   const [applied, setApplied] = useState(false);
   const [variant, setVariant] = useState<NewsVariant>("navy");
-  const [bandAlpha, setBandAlpha] = useState(0.82);
+  // Mientras nadie haya tocado los botones, la tinta la elige la plantilla midiendo la foto
+  // (`chooseInk`). En cuanto el operador elige, manda él — también al rehacer.
+  const [inkChosen, setInkChosen] = useState(false);
+  const [blur, setBlur] = useState(0.45);
   const [figure, setFigure] = useState({ valor: "", unidad: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +90,7 @@ export function NewsPanel() {
     if (!canvas) return;
     setApplied(hasNewsTemplate(canvas));
     setVariant(currentVariant(canvas));
-    setBandAlpha(readBandOpacity(canvas));
+    setBlur(readBlur(canvas));
     setFigure(readNewsFigure(canvas));
   }, [primaryPage, getCanvasForPage]);
 
@@ -148,10 +154,11 @@ export function NewsPanel() {
         setCopy(fresh);
         await composeNewsOnCanvas(canvas, pageId, fresh, {
           ...pageSize,
-          variant: opts?.variant ?? variant,
+          // `undefined` = que la elija la plantilla midiendo la fotografía.
+          variant: opts?.variant ?? (inkChosen ? variant : undefined),
         });
       }),
-    [run, fetchCopy, composeNewsOnCanvas, figure, variant, canvasWidth, canvasHeight]
+    [run, fetchCopy, composeNewsOnCanvas, figure, variant, inkChosen, canvasWidth, canvasHeight]
   );
 
   const revert = useCallback(
@@ -176,6 +183,7 @@ export function NewsPanel() {
    *  elegido el color con el que se aplicará. */
   const chooseVariant = useCallback(
     (next: NewsVariant) => {
+      setInkChosen(true);
       if (next === variant) return;
       if (!applied) {
         setVariant(next);
@@ -189,29 +197,19 @@ export function NewsPanel() {
   );
 
   /**
-   * La opacidad de la franja, en dos tiempos: arrastrar repinta el lienzo directamente (es
-   * barato, solo recolorea un rectángulo, y sin eso el control no enseñaría lo que hace),
-   * soltar pasa por `run()` para que quede **una** entrada de historial y se guarde.
+   * El desenfoque solo se aplica al soltar el deslizador, no durante el arrastre: cada cambio
+   * vuelve a filtrar el bitmap entero y hacerlo en cada píxel va a tirones — el mismo criterio
+   * que los deslizadores de efectos del panel Bg (§9.14).
    */
-  const dragBandAlpha = useCallback(
+  const commitBlur = useCallback(
     (next: number) => {
-      setBandAlpha(next);
-      if (!applied || !primaryPage) return;
-      const canvas = getCanvasForPage(primaryPage.id);
-      if (canvas) setNewsBandOpacityOnCanvas(canvas, primaryPage.id, next);
-    },
-    [applied, primaryPage, getCanvasForPage, setNewsBandOpacityOnCanvas]
-  );
-
-  const commitBandAlpha = useCallback(
-    (next: number) => {
-      setBandAlpha(next);
+      setBlur(next);
       if (!applied) return;
       void run((canvas, pageId) => {
-        setNewsBandOpacityOnCanvas(canvas, pageId, next, { commit: true });
+        setNewsBlurOnCanvas(canvas, pageId, next, pageSize);
       });
     },
-    [applied, run, setNewsBandOpacityOnCanvas]
+    [applied, run, setNewsBlurOnCanvas, canvasWidth, canvasHeight]
   );
 
   const commitFigure = useCallback(
@@ -244,10 +242,10 @@ export function NewsPanel() {
   return (
     <div>
       <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
-        Plantilla opcional: la foto arriba y abajo una franja translúcida con la sección, el
-        titular y el pie. A través de la franja se ve la misma foto desenfocada, así que el
-        titular nunca compite con la imagen. En cuadrado la franja ocupa más sitio que en
-        1080×1350, que es el formato para el que está pensada.
+        Plantilla opcional: una sola foto a página completa, nítida arriba y difuminada abajo
+        —sin corte entre las dos— con la sección, el titular y el pie sobre la parte
+        difuminada. No lleva ningún bloque de color: lo que hace legible el titular es el
+        desenfoque, el peso de la letra y su sombra.
       </p>
 
       {applied ? (
@@ -283,7 +281,11 @@ export function NewsPanel() {
         </button>
       )}
 
-      <p class="text-zinc-400 text-[11px] font-semibold mb-1">Variante</p>
+      <p class="text-zinc-400 text-[11px] font-semibold mb-1">Tinta</p>
+      <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">
+        Al aplicar la plantilla se elige sola midiendo la luminosidad de la foto en la zona del
+        texto. Si la cambias aquí, manda tu elección.
+      </p>
       <div class="grid grid-cols-2 gap-1 mb-3">
         {VARIANTS.map((v) => (
           <button
@@ -307,23 +309,22 @@ export function NewsPanel() {
       </div>
 
       <label class="text-zinc-400 text-[11px] font-semibold mb-1 flex justify-between">
-        Opacidad de la franja
-        <span class="text-zinc-400 font-mono">{Math.round(bandAlpha * 100)}%</span>
+        Desenfoque del fondo
+        <span class="text-zinc-400 font-mono">{Math.round(blur * 100)}%</span>
       </label>
       <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">
-        Cuánto tapa la franja la foto desenfocada de detrás. Cuanto más baja, más se ve la
-        imagen y menos contraste tiene el titular.
+        Cuánto se difumina la mitad de abajo de la foto. Es lo que más ayuda a que se lea el
+        titular: lo que estorba no es el brillo del fondo, es su detalle.
       </p>
       <input
         type="range"
-        min={BAND_ALPHA_MIN}
-        max="1"
-        step="0.02"
+        min={BLUR_MIN}
+        max={BLUR_MAX}
+        step="0.05"
         class="w-full accent-accent mb-3 disabled:opacity-40"
-        value={bandAlpha}
+        value={blur}
         disabled={busy || !applied}
-        onInput={(e) => dragBandAlpha(parseFloat((e.target as HTMLInputElement).value))}
-        onChange={(e) => commitBandAlpha(parseFloat((e.target as HTMLInputElement).value))}
+        onChange={(e) => commitBlur(parseFloat((e.target as HTMLInputElement).value))}
       />
 
       <p class="text-zinc-400 text-[11px] font-semibold mb-1">Dato destacado</p>

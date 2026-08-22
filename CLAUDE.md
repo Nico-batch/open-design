@@ -154,8 +154,9 @@ src/
     │   ├── event-fields.ts     — campos de un evento → texto publicable, fechas (§9.26)
     │   ├── event-template.ts   — plantilla de eventos: bloques, modos, temas (§9.26/§9.27)
     │   ├── news-fields.ts      — secciones de una noticia y la cuenta del pie (§9.28)
-    │   ├── news-template.ts    — plantilla opcional de noticias: franja translúcida sobre la
-    │   │                         foto desenfocada, chip, pie (§9.28/§9.29)
+    │   ├── news-template.ts    — plantilla opcional de noticias: una foto a página completa,
+    │   │                         nítida arriba y difuminada abajo, chip, titular y pie sobre
+    │   │                         la parte difuminada (§9.28/§9.29/§9.30)
     │   └── palette.ts          — colores de marca + muestras de los selectores (§9.29)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
@@ -168,7 +169,7 @@ src/
         ├── editor.tsx, canvas-area.tsx, page-canvas.tsx, pages-bar.tsx
         ├── guides-overlay.tsx      — guías de centro imantadas, capa DOM fuera de Fabric (§9.23)
         ├── event-panel.tsx         — sección "Evento" del sidebar izquierdo (§9.26)
-        ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28/§9.29)
+        ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28/§9.30)
         ├── color-field.tsx         — selector de color con muestras de marca (§9.29)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
@@ -2239,6 +2240,15 @@ puede adivinar desde aquí.
 
 ### 9.29 Franja translúcida, portrait por defecto y muestras de color
 
+> **Superado en parte por §9.30**: la franja translúcida que describe esta sección duró un
+> día. El usuario la vio y pidió quitar el color del todo —"la imagen difuminada sin más, sin
+> azul ni nada por el estilo"— así que el bloque de color desapareció y la legibilidad se
+> resolvió de otra manera. Lo que **sigue vigente** de aquí: el formato portrait por defecto,
+> las muestras de color de los selectores, el chip a 30 px y la mecánica de la capa `glass`
+> (cómo se construye, por qué es síncrona y por qué necesita `_srcUrl`). Lo que **ya no**: la
+> opacidad de la franja y su deslizador, el `Palette.band`, y la geometría del cristal, que en
+> §9.30 pasa a ser la misma que la de la foto.
+
 Tres peticiones sobre lo que dejó §9.28.
 
 #### El formato por defecto pasa a 1080×1350
@@ -2359,3 +2369,134 @@ una copia aparte de la base de datos, no la del repo; **ninguna prueba escribió
   dejar ilegible del todo.
 - Sigue vigente lo que §9.28 anotaba de **«Mejorar foto»**: añadiría velo y filtros a la
   fotografía, que es justo lo que este diseño evita al desenfocar solo la copia.
+
+
+### 9.30 Sin corte y sin color: una sola foto, difuminada hacia abajo
+
+Petición del usuario sobre la franja translúcida de §9.29: «que no parezca que haya un corte,
+quiero la imagen difuminada sin más, sin color azul ni nada por el estilo, y que halles la
+manera entonces de que las letras resalten».
+
+Son dos problemas encadenados, y el segundo solo existe por culpa de resolver el primero.
+
+#### Por qué había un corte, y qué lo quita
+
+En §9.29 la copia desenfocada era **otro recorte de la misma foto**: la original se encajaba
+contra la banda superior y el cristal se anclaba al borde inferior. Aunque las dos usaran la
+misma escala, enseñaban trozos distintos de la fotografía, así que en el borde se veía un
+salto — y encima el rectángulo de color remataba la línea.
+
+Ahora hay **una sola imagen a página completa**, y el cristal tiene *exactamente su misma
+transformación*: misma escala, mismo `left`, mismo `top`. Encima de cada píxel de la foto está
+el mismo píxel, solo que desenfocado. Lo único que los separa es la máscara.
+
+**La máscara es una imagen, y ahí está el truco.** Fabric dibuja un `clipPath` con
+`drawObject(ctx, forClipping = true)`, y ese método **fuerza el relleno a negro opaco**
+(`_setClippingProperties`), de modo que un degradado en el `fill` de un `Rect` se pierde y la
+máscara sale opaca de borde a borde — un corte otra vez. Una `FabricImage`, en cambio, se pinta
+con `drawImage` y **conserva el alfa de sus propios píxeles**; y como el recorte se aplica con
+`globalCompositeOperation = 'destination-in'`, ese alfa se traduce en transparencia real. Así
+que `fadeMask` genera un canvas de 1×512 con un degradado vertical de alfa y lo usa de
+`clipPath`: el desenfoque no *empieza* en ninguna línea, va apareciendo a lo largo de 135 px
+(el 10 % de la altura, `FADE_RATIO`) mezclándose con la foto nítida que tiene debajo.
+
+Medido sobre los píxeles pintados, la energía de bordes por fila baja de forma continua
+(12,6 → 5,2 → 4,6 → 1,2) en vez de caer de golpe. El único salto brusco que queda en toda la
+página está dentro del titular, que es texto.
+
+**Consecuencia en el encuadre**: la foto pasa de encajarse contra la banda superior a
+`fitPhotoToPage` (cover de la página entera, con el mismo `PHOTO_ANCHOR = 0.25` que salva las
+cabezas). Está más recortada que antes; es el precio de que la mitad de abajo sea la
+continuación real de la de arriba y no un segundo encuadre.
+
+#### Y entonces, ¿qué hace legible el titular?
+
+Sin bloque de color, tres cosas a la vez, y ninguna de ellas es un velo:
+
+1. **El desenfoque, que es la principal.** Lo que estorba a la lectura no es el brillo del
+   fondo sino su **detalle**; un desenfoque fuerte lo elimina sin tocar el color de la foto. El
+   valor por defecto sube de 0.3 a **0.45** y el deslizador del panel llega a 0.8.
+2. **El peso de la letra.** Barlow Condensed solo tenía 400 y 500 autoalojados; se añadió el
+   **600** (`public/fonts/Barlow-Condensed/600.woff2`, subset latin, mismo camino que las 38
+   caras anteriores) y el titular y la cifra pasan a usarlo. A 500 el titular se deshacía sobre
+   cualquier fondo con textura.
+3. **Una sombra bajo la tinta** (`inkShadow`), proporcional al cuerpo. El chip es la excepción:
+   va sobre su propia píldora opaca y una sombra ahí solo le ensuciaría el borde.
+
+**La tinta la elige la propia fotografía.** `chooseInk` mide la luminancia media del bitmap
+original —no del cristal: el desenfoque no cambia la media, y el original está disponible
+siempre— en la franja que cae bajo el texto, a resolución mínima (un `drawImage` a 24×12).
+Por encima de 165 pasa a tinta oscura. **El umbral está alto a propósito porque las dos tintas
+no son simétricas**: la crema con sombra oscura aguanta un fondo medio mucho mejor que el azul
+noche con halo claro. Leer píxeles exige que el lienzo no esté *tainted*, cosa que se cumple
+porque la foto llega por el proxy (§9.3); si aun así lanzara, se cae a tinta clara.
+
+En cuanto el operador toca los botones de tinta, manda él — también al rehacer la plantilla.
+
+#### Lo que cambia de nombre sin cambiar de clave
+
+- Las variantes siguen llamándose `navy` y `cream` en el `canvas_json` (están grabadas en los
+  borradores guardados) pero ya no son "franja azul / franja crema": son **tinta clara** y
+  **tinta oscura**, y así las llama el panel. Lo que cambian es de qué lado está el contraste,
+  igual que los dos temas de la plantilla de eventos (§9.27).
+- El rol `band` sobrevive **sin pintar nada** (`rgba(0,0,0,0)`): es el ancla de la maquetación y
+  la señal por la que `logo.ts` coloca la marca arriba a la izquierda. Se fuerza transparente en
+  cada pasada de `layout`, y eso es lo que **migra solos a los borradores** guardados cuando la
+  franja sí era un bloque de color (verificado devolviendo un diseño a mano al formato anterior:
+  al reabrirlo, franja transparente, cristal reconstruido y foto a página completa).
+- El deslizador del panel deja de ser "Opacidad de la franja" y pasa a ser **"Desenfoque del
+  fondo"**. Y ya no se aplica durante el arrastre sino **al soltar**: recolorear un rectángulo
+  era barato, volver a filtrar el bitmap entero no lo es — el mismo criterio que los
+  deslizadores de efectos del panel Bg (§9.14).
+- Las opacidades de la tinta suben (0.72/0.22/0.68 → **0.9/0.45/0.88**). Las de la guía se
+  eligieron contra un bloque de color liso; sobre una fotografía, aunque esté desenfocada, un
+  texto al 68 % se deshace.
+
+#### Una excepción a la regla de "nada de `data:image` en el JSON"
+
+La máscara es un canvas generado, así que Fabric la serializa como data URL dentro de
+`glass.clipPath`. Son **222 bytes** (un PNG de 1×512 en escala de grises) sobre un `canvas_json`
+de 7,3 KB, y a cambio la máscara sobrevive a la recarga tal cual, sin un parpadeo sin recortar
+entre `loadFromJSON` y el primer re-maquetado. Es la única data URL del documento: la foto y el
+cristal siguen apuntando los dos a la URL del proxy.
+
+#### Verificado contra el build de producción
+
+`pnpm run build` + `pnpm run start` en `:8788` con la CSP real (regla de §9.11/§10.3), con
+Playwright, sobre una copia aparte de la base de datos. **Ninguna prueba escribió en Twenty.**
+
+- **Sin costura**: perfil de nitidez fila a fila continuo a través de toda la transición; el
+  mayor salto de la página cae dentro del titular. Comprobado en dos fotos de carácter opuesto
+  (un interior de estadio y un eclipse).
+- **Foto y cristal alineados** (`scaleX`, `left` y `top` idénticos) y la foto cubriendo la
+  página entera, en los tres formatos.
+- **Legibilidad medida, no supuesta**: contraste del trazo del titular contra su fondo
+  inmediato en cuatro noticias reales — **7,3 / 14,4 / 14,4 / 18,3 : 1**, todas por encima del
+  4,5:1 de WCAG AA. La más ajustada es la de fondo más claro, y aun así sobra.
+- **Tinta**: las cuatro eligieron clara sola; forzando la oscura, el titular pasa a azul noche
+  con halo crema (`offsetY 0`) y el chip se invierte, todo a la vez.
+- **Desenfoque**: el panel lee 0.45 del lienzo, subirlo al 75 % deja un solo cristal con
+  `Blur(0.75)`, y volver a 0.45 lo reconstruye.
+- **Los tres formatos** (1350 → 1920 → 1080 → 1350): máscara recolocada, foto reencajada,
+  margen inferior de 48,0 px exacto, y volver al de partida reproduce la maqueta original.
+- **Migración** de un borrador devuelto a mano al formato de §9.29, **ciclo** aplicar → rehacer
+  → volver al diseño normal sin duplicados y sin tocar un texto añadido a mano, **undo/redo** de
+  la plantilla entera de una vez, **persistencia** idéntica entre dos aperturas, exportación
+  **2160×2700**, y **Barlow Condensed 400/500/600** los tres en `loaded`.
+- **Sin foto**: no se crea cristal ni chip, el lienzo queda en azul de marca y el titular sale
+  en crema a peso 600 con su sombra.
+- **Sin regresión**: un evento conserva sus `_tplRole`, su velo y su tema, y no aparece ni un
+  `_nwRole` en su lienzo.
+- Cero errores de consola en todos los pasos.
+
+#### Límites conocidos
+
+- **El encuadre de la foto está más cerrado** que en §9.28/§9.29, porque ahora tiene que cubrir
+  la página entera y no solo la banda superior. Se puede reencuadrar a mano como cualquier
+  fondo, pero un cambio de formato lo descarta (lo de siempre).
+- **`chooseInk` mide una media.** Una foto cuya mitad inferior sea mitad cielo y mitad sombra
+  puede elegir mal; para eso están los dos botones.
+- El cristal sigue **duplicando el bitmap en memoria** mientras la plantilla está puesta, con el
+  añadido de que ahora se refiltra cada vez que se mueve el deslizador de desenfoque.
+- Sigue vigente lo que anotaba §9.28 de **«Mejorar foto»**: añadiría velo y filtros a la
+  fotografía, que es justo lo que este diseño evita.
