@@ -2375,10 +2375,9 @@ una copia aparte de la base de datos, no la del repo; **ninguna prueba escribió
 
 ### 9.30 Sin corte y sin color: una sola foto, difuminada hacia abajo
 
-> **La mitad de esto se invirtió en §9.33.** El "sin corte" duró tres versiones: el usuario
-> pidió justo lo contrario —un corte recto, para dar profundidad— así que el degradado de alfa
-> y su máscara de imagen desaparecieron. Sigue vigente todo lo demás: una sola foto a página
-> completa, sin bloque de color, con el cristal exactamente encima de la original.
+> **Al día**, incluido el degradado: §9.33 lo sustituyó por un corte recto y §9.34 lo devolvió
+> aquí un rato después. Lo único que ha cambiado desde entonces es el cuerpo del titular, que
+> ya no es un rango sino un valor fijo (70 px, §9.33/§9.34).
 
 > **Corregido en §9.31**: el desenfoque por defecto pasó de 0.45 a **0.20**, la fotografía deja
 > de ser un objeto suelto mientras la plantilla está puesta, y la máscara se desborda de la
@@ -2803,6 +2802,12 @@ ratón real, sobre una **copia aparte de la base de datos**. 35 comprobaciones, 
 
 ### 9.33 Corte recto en vez de degradado, y el titular a 72
 
+> **La mitad de esta sección está revertida (§9.34).** El corte recto duró lo que se tardó en
+> verlo en pantalla; el degradado volvió. Se conserva entera porque el trabajo de medición
+> sigue sirviendo —es la prueba de que las dos cosas se distinguen objetivamente— y porque el
+> razonamiento a favor del corte es el que habrá que rebatir si la idea reaparece. **El cuerpo
+> fijo del titular sí sigue vigente**, ahora a 70.
+
 Dos peticiones del usuario sobre §9.30/§9.31: «quiero que el corte entre la zona desenfocada y
 la imagen sea un corte limpio, que se note de golpe la diferencia, quiero darle la profundidad»
 y «la letra a un tamaño de 72».
@@ -2876,3 +2881,47 @@ la base de datos. **Ninguna prueba escribió en Twenty.**
 Con el desenfoque al 20 % (§9.31) el corte se ve, pero la diferencia entre las dos mitades es
 moderada. Si se quisiera más profundidad, el deslizador «Desenfoque del fondo» del panel
 «Noticia» es el sitio: ahí sí cambia cuánto separa el corte a las dos mitades, no dónde cae.
+
+### 9.34 Vuelta al degradado, y el titular a 70
+
+El corte recto de §9.33 duró un despliegue. Visto en pantalla, el usuario prefirió el degradado
+de §9.30, y de paso ajustó el cuerpo del titular de 72 a **70**.
+
+#### Qué se deshace y qué no
+
+Se deshace **solo la máscara**: vuelven `FADE_RATIO` y `fadeMask` —el canvas de 8×512 con la
+rampa de alfa, con todo lo que §9.30 documenta sobre por qué tiene que ser una imagen y no un
+`Rect`— y con ellos la única `data:` URL del `canvas_json`, que sigue siendo una excepción
+consciente de 222 bytes.
+
+**No** se deshace el cuerpo fijo del titular: `D.headlineSize` se queda, solo baja a 70.
+`fitHeadline` sigue sin elegir cuerpo y `HEADLINE_MAX_LINES` sigue sin existir. Los cuatro
+titulares reales de 81 a 109 caracteres siguen cayendo en 3 líneas y el borde del desenfoque
+queda en el 59,5 % de la altura en los cuatro (era el 59,0 % a 72).
+
+#### Por qué el corte recto no funcionaba, para no repetirlo
+
+La medición de §9.33 era correcta: el corte se notaba, y mucho. El problema era otro — sobre
+una fotografía cualquiera, una línea horizontal dura a media página **compite con el titular**
+en vez de sostenerlo: son dos elementos fuertes a la misma altura, y el ojo va antes a la línea
+que al texto. El degradado no separa dos zonas, que era el objetivo declarado; lo que hace es
+que la fotografía siga leyéndose como una sola imagen mientras el fondo se apaga bajo el texto.
+
+#### Verificado contra el build de producción
+
+`pnpm run build` + `pnpm run start` con la CSP real, sobre una copia aparte de la base de datos.
+**Ninguna prueba escribió en Twenty.**
+
+- **La transición vuelve a ser continua**, con la misma métrica de §9.33 pero medida **sobre la
+  rampa conocida** y no buscando el mayor salto del lienzo — ese error de método daba números
+  sin sentido, porque el borde inferior de la página contra el margen de trabajo (§9.13) es un
+  salto mucho mayor que cualquier cosa del diseño. En tres noticias, la nitidez baja de 2,31 a
+  0,48 / 0,91 a 0,28 / 1,56 a 0,62, y **el mayor salto de una sola fila es 0,13 / 0,08 / 0,04**,
+  o sea entre el 4 % y el 12 % de la caída total. Con el corte recto una sola fila se llevaba
+  el 67 %.
+- El `clipPath` guardado vuelve a ser `Image`, la rampa arranca 135 px por encima de la zona de
+  texto, y ningún `src` de imagen es una `data:` URL.
+- **Titular a 70** en las cuatro noticias, cero solapes medidos par a par, margen inferior de
+  48,0 px exacto y ningún bloque por encima del borde.
+- **Sin regresión**: las cuatro suites de §9.32 pasan enteras (61 comprobaciones). Cero errores
+  de consola.

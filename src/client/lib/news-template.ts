@@ -16,16 +16,14 @@ import { BRAND } from "./palette";
  * arriba y desenfocada abajo, con el chip de sección, el titular y el pie sobre la parte
  * desenfocada.
  *
- * No hay ningún bloque de color: la mitad de abajo es la misma foto, sin virar y sin velo. La
- * copia desenfocada va **exactamente encima de la original, con su misma transformación** (ver
- * `syncGlass`), así que lo único que cambia entre las dos mitades es la nitidez: los mismos
- * píxeles, de golpe más suaves.
+ * No hay ningún bloque de color: la mitad de abajo es la misma foto, sin virar y sin velo.
+ * Y no hay ningún corte entre las dos mitades, que es la razón de ser de todo el diseño —
+ * la copia desenfocada va **exactamente encima de la original, con su misma transformación**,
+ * y aparece con un degradado de alfa (ver `syncGlass` y `fadeMask`), de modo que lo único que
+ * cambia a lo largo de esa transición es la nitidez. Los mismos píxeles, cada vez más suaves.
  *
- * Y de golpe es literal: el borde es **un corte recto** a la altura donde empieza la zona de
- * texto (`bandClip`). §9.30 lo hizo al revés —un degradado de ~135 px para que no se notara
- * ninguna costura— y §9.33 lo invirtió a petición del usuario: la línea dura da profundidad,
- * separa la fotografía de la zona de lectura y se lee como una decisión y no como una foto
- * mal enfocada.
+ * (§9.33 probó lo contrario, un corte recto, y §9.34 lo devolvió a esto. Queda anotado por si
+ * la idea vuelve: en pantalla la línea dura competía con el titular en lugar de sostenerlo.)
  *
  * De ahí se sigue el resto: sin bloque de color, la legibilidad del texto tiene que salir de
  * otro sitio, y sale de tres a la vez — el desenfoque (que borra el *detalle* del fondo, que
@@ -223,12 +221,19 @@ export const BLUR_MIN = 0.05;
 export const BLUR_MAX = 0.8;
 
 /**
- * Cuánto se desborda la máscara del desenfoque más allá de la página, por los lados y por
- * abajo. El borde de arriba **no** se desborda: ese es el corte, y tiene que caer exacto.
+ * Altura de la transición entre la foto nítida y la desenfocada, como fracción de la página.
  *
- * Es gratis: el recorte del área de trabajo (§9.13) ya corta a la página, y el cristal no
- * puede pintar más allá de la propia foto.
+ * Es lo que hace que no se vea ningún corte: en vez de un borde donde acaba una y empieza la
+ * otra, la copia desenfocada aparece con un degradado de alfa a lo largo de ~135 px (en una
+ * página de 1350), de modo que el desenfoque *crece* en vez de encenderse.
+ *
+ * §9.33 lo sustituyó por un corte recto y §9.34 lo devolvió aquí: visto en pantalla, la línea
+ * dura competía con el titular en vez de sostenerlo. El degradado es lo que hace que la
+ * fotografía siga leyéndose como una sola imagen.
  */
+const FADE_RATIO = 0.1;
+
+/** Cuánto se desborda la máscara del desenfoque más allá de la página, por lado. */
 const MASK_BLEED = 8;
 
 function withAlpha(hex: string, alpha: number): string {
@@ -273,7 +278,7 @@ const D = {
    * pide a una plantilla. Lo que cede en su lugar es el alto de la zona de texto, que ya
    * crecía hacia arriba cuando el titular no cabía (ver `layout`).
    */
-  headlineSize: 72,
+  headlineSize: 70,
   headlineTracking: -2,
   headlineLineHeight: 0.98,
   gapAfterHeadline: 42,
@@ -819,30 +824,59 @@ function sourceUrl(img: fabric.FabricImage): string {
 }
 
 /**
- * La máscara del desenfoque: un corte limpio a la altura de `top`.
+ * La máscara que hace que no se vea ningún corte.
  *
- * **Era un degradado y ahora no lo es**, y el cambio va en contra de la premisa con la que se
- * escribió §9.30 ("que no parezca que haya un corte"). El usuario pidió lo contrario: que la
- * diferencia se note de golpe, para que la fotografía gane profundidad — arriba nítida, abajo
- * desenfocada, y una línea entre las dos. Un desenfoque que *aparece* poco a poco se lee como
- * una foto mal enfocada; uno que empieza en un borde recto se lee como una decisión.
+ * Es una **imagen** y no un rectángulo, y ahí está todo el asunto: Fabric dibuja un `clipPath`
+ * con `drawObject(ctx, forClipping = true)`, que **fuerza el relleno a negro opaco**
+ * (`_setClippingProperties`), así que un degradado en el `fill` de un `Rect` se pierde y la
+ * máscara sale opaca de borde a borde. Una `FabricImage`, en cambio, se pinta con `drawImage`
+ * y conserva el alfa de sus propios píxeles — y como el recorte se aplica con
+ * `globalCompositeOperation = destination-in`, ese alfa se traduce en transparencia real.
  *
- * Y eso simplifica lo que §9.30 tuvo que rodear: allí la máscara **tenía** que ser una imagen
- * porque Fabric dibuja un `clipPath` con `drawObject(ctx, forClipping = true)`, que fuerza el
- * relleno a negro opaco (`_setClippingProperties`) y se comía cualquier degradado. Para un
- * corte recto eso deja de ser un problema y pasa a ser justo lo que hace falta, así que basta
- * un `Rect`. De paso desaparece la única `data:` URL que quedaba en el `canvas_json` (los 222
- * bytes del PNG de la rampa) y con ella los problemas de interpolación de sus bordes.
+ * De modo que la copia desenfocada no *empieza* en una línea: va apareciendo a lo largo del
+ * degradado, mezclándose con la foto nítida que tiene justo debajo. Como las dos son la misma
+ * imagen en la misma posición, la mezcla no duplica nada: lo único que cambia es la nitidez.
  */
-function bandClip(pageWidth: number, top: number, pageHeight: number): fabric.Rect {
-  const clip = new fabric.Rect({
-    left: -MASK_BLEED,
-    top,
-    width: pageWidth + 2 * MASK_BLEED,
-    height: pageHeight - top + MASK_BLEED,
+function fadeMask(
+  pageWidth: number,
+  fadeTop: number,
+  fadeHeight: number,
+  pageHeight: number
+): fabric.FabricImage | null {
+  // La rampa solo varía en vertical, así que el ancho no aporta resolución… pero **no puede ser
+  // de 1 px**: al escalar un origen de un solo texel hasta el ancho de la página, la
+  // interpolación deja los bordes a medio alfa y el desenfoque no llegaba al borde derecho.
+  // Con 8 px de ancho los texels interpolados quedan lejos del área que importa.
+  const RAMP = 512;
+  const COLS = 8;
+  const el = document.createElement("canvas");
+  el.width = COLS;
+  el.height = RAMP;
+  const ctx = el.getContext("2d");
+  if (!ctx) return null;
+  const total = pageHeight - fadeTop;
+  if (total <= 0) return null;
+  // Dónde acaba la rampa dentro de la máscara, en fracción de su altura.
+  const stop = Math.min(1, fadeHeight / total);
+  const grad = ctx.createLinearGradient(0, 0, 0, RAMP);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(stop, "rgba(0,0,0,1)");
+  grad.addColorStop(1, "rgba(0,0,0,1)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, COLS, RAMP);
+
+  // Y además se desborda por los lados y por abajo. Es gratis —el recorte del área de trabajo
+  // (§9.13) ya corta a la página, y el cristal no puede pintar más allá de la propia foto— y
+  // cubre de una vez los dos motivos por los que el borde se quedaba corto: la interpolación
+  // del bitmap y el error de precisión de invertir la matriz del cristal, que va escalado y
+  // desplazado (`absolutePositioned`).
+  const mask = new fabric.FabricImage(el, { left: -MASK_BLEED, top: fadeTop });
+  mask.set({
+    scaleX: (pageWidth + 2 * MASK_BLEED) / COLS,
+    scaleY: (total + MASK_BLEED) / RAMP,
   });
-  clip.absolutePositioned = true;
-  return clip;
+  mask.absolutePositioned = true;
+  return mask;
 }
 
 /**
@@ -912,10 +946,10 @@ function syncGlass(
     top: photo.top ?? 0,
   });
   // La máscara se rehace siempre: el borde del desenfoque se mueve con el titular y con el
-  // formato. Cae **exactamente** en `bandTop`, que es el borde superior de la zona de texto:
-  // el corte y el sitio donde empieza a haber texto son la misma línea, y el chip entra 64 px
-  // más abajo, ya dentro de lo desenfocado.
-  glass.clipPath = bandClip(pageWidth, bandTop, pageHeight);
+  // formato. Arranca por encima de `bandTop` para que el desenfoque ya esté al 100 % cuando
+  // empieza el texto, que va 64 px más abajo.
+  const fade = Math.round(pageHeight * FADE_RATIO);
+  glass.clipPath = fadeMask(pageWidth, Math.max(0, bandTop - fade), fade, pageHeight) ?? undefined;
   glass.setCoords();
 }
 
