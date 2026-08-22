@@ -2373,6 +2373,10 @@ una copia aparte de la base de datos, no la del repo; **ninguna prueba escribió
 
 ### 9.30 Sin corte y sin color: una sola foto, difuminada hacia abajo
 
+> **Corregido en §9.31**: el desenfoque por defecto pasó de 0.45 a **0.20**, la fotografía deja
+> de ser un objeto suelto mientras la plantilla está puesta, y la máscara se desborda de la
+> página. Todo lo demás de esta sección sigue vigente.
+
 Petición del usuario sobre la franja translúcida de §9.29: «que no parezca que haya un corte,
 quiero la imagen difuminada sin más, sin color azul ni nada por el estilo, y que halles la
 manera entonces de que las letras resalten».
@@ -2500,3 +2504,143 @@ Playwright, sobre una copia aparte de la base de datos. **Ninguna prueba escribi
   añadido de que ahora se refiltra cada vez que se mueve el deslizador de desenfoque.
 - Sigue vigente lo que anotaba §9.28 de **«Mejorar foto»**: añadiría velo y filtros a la
   fotografía, que es justo lo que este diseño evita.
+
+
+### 9.31 Tres bugs de la plantilla de noticias, y el desenfoque al 20 %
+
+Reporte del usuario sobre §9.30: «el bloque difuminado no está del todo pegado al borde
+derecho», «hay ocasiones en las que se quita la imagen de la noticia y se pone sólido azul
+oscuro», y que el desenfoque por defecto fuera del 20 %. Más un encargo: comprobar a fondo los
+botones. De ahí salieron **tres bugs encadenados**, y el segundo llevaba escondido desde §9.28.
+
+#### Bug 1 — Fabric no serializa `selectable` ni `evented`
+
+Ninguna de las cuatro propiedades de interacción (`selectable`, `evented`, `hasControls`,
+`hoverCursor`) entra en `toObject()`. Comprobado sobre un `canvas_json` real: en los objetos de
+la plantilla **no aparece ninguna**.
+
+Consecuencia: **todo lo que la plantilla marca como chrome vuelve de `loadFromJSON` siendo
+clicable y arrastrable**, con los valores por defecto de Fabric. Y el objeto que más daño hace
+es el cristal, que cubre la fotografía entera: al reabrir un borrador, un clic en cualquier
+punto de la imagen lo seleccionaba a él, de modo que se podía arrastrar —dejando la mitad nítida
+y la difuminada descuadradas— o borrar de un `Delete`. Con la fotografía, lo mismo.
+
+`normalizeNewsTemplate` rehace esos ajustes por rol, y se llama desde las **tres** rutas que
+reconstruyen el lienzo: abrir la página, deshacer/rehacer y aplicar una plantilla. Es el mismo
+patrón y el mismo motivo que `applyWorkspaceClip` (§9.16) y `normalizeBackgroundSource` (§9.18)
+— `loadFromJSON` devuelve el lienzo a su estado *serializado*, no al que tenía en memoria.
+
+**Los textos siguen siendo editables** (chip, cifra, unidad, titular y pie); lo que se bloquea es
+el chrome, que es lo que nunca se debió poder coger.
+
+#### Bug 2 — el logo suelto que acababa haciendo de fotografía
+
+El más raro de los tres, y el que explica el «se quita la imagen y se pone azul».
+
+La capa del logo se marca con `_isLogo`, que **tampoco se serializa** — y no debería hacer falta,
+porque `withoutLogo` la retira antes de guardar. Pero si alguna vez se cuela una copia en el
+`canvas_json`, al restaurarla vuelve **sin marca**: ni `withoutLogo` la retiraba al guardar ni
+`applyLogoToCanvas` la sustituía (las dos usaban `.find`, o sea *la primera*), así que el diseño
+acumulaba un logo más por apertura. Y como esas copias eran ya imágenes anónimas, el respaldo
+*legacy* de `findBackgroundImage` **adoptaba una como la fotografía de fondo** y la marcaba
+`_isBgImage`. Observado en un diseño de prueba: tres logos guardados, uno de ellos tagueado como
+fondo y **un cristal desenfocado construido a partir del logo**.
+
+Arreglo en [`logo.ts`](src/client/lib/logo.ts): `isLogoObject` reconoce la capa **también por su
+`src`**, no solo por la marca, y `withoutLogo`/`applyLogoToCanvas` operan sobre **todas** las que
+haya, no sobre la primera. Con eso los diseños ya afectados **se curan solos** en cuanto se
+abren: las copias sueltas se identifican, se retiran y dejan de guardarse. Verificado: el diseño
+de prueba pasó de tres logos y un cristal falso a ninguno.
+
+#### Bug 3 — el azul era un pestillo
+
+`composeNewsTemplate` pintaba el lienzo de azul de marca cuando no encontraba fotografía, **y no
+lo deshacía nunca**. Una sola composición sin imagen —tras borrarla sin querer (bugs 1 y 2), o
+si Twenty falla— dejaba el azul grabado en el `canvas_json` para siempre.
+
+Dos cambios:
+- El color se fija **en los dos sentidos**: `backgroundColor = photo ? "#ffffff" : NAVY`. Eso
+  cura solo cualquier diseño ya afectado, en cuanto vuelve a tener foto.
+- Y antes de eso, **si el registro tiene imagen pero el lienzo no, se recupera**: el panel
+  guarda el `imageUrl` de la última lectura y `compose` la carga con `applyBackgroundToCanvas`
+  antes de componer. Así «Rehacer plantilla» *arregla* una foto perdida en vez de castigar con
+  el azul.
+
+#### La fotografía se bloquea mientras la plantilla está puesta
+
+Es la raíz de los bugs 1 y 3 vista desde el otro lado: **con la plantilla puesta la foto era el
+único objeto que recibía clics**, porque todo el chrome es `evented: false` y los textos solo
+ocupan el tercio bajo. Cualquier clic sobre la mitad superior la seleccionaba.
+
+`lockPhoto` la deja fuera del alcance del ratón, y `revertNewsTemplate` la devuelve a
+interactiva. **No se pierde nada**: con la plantilla puesta el encuadre lo decide
+`fitPhotoToPage`, que corre en *cada* `layout()` —cambio de formato, de cifra, de desenfoque—,
+así que un reencuadre a mano ya se estaba descartando en silencio. Cover/Contain, el deslizador
+de escala y «Mejorar foto» siguen funcionando: van por `findBackgroundImage`, no por la
+selección. Y por si acaso, `object:modified` sobre el fondo re-sincroniza la geometría del
+cristal (`resyncGlassGeometry`), que es barato porque no re-filtra.
+
+#### El borde derecho
+
+`fadeMask` generaba el degradado en un canvas de **1 px de ancho** escalado ×1080. Un origen de
+un solo texel interpolado hasta el ancho de la página deja los bordes a medio alfa, y encima el
+`absolutePositioned` añade el error de precisión de invertir la matriz del cristal, que va
+escalado y desplazado. De ahí la tira sin difuminar a la derecha.
+
+Ahora el origen tiene **8 px de ancho** y la máscara **se desborda 8 px por cada lado y por
+abajo**. Desbordar es gratis: el recorte del área de trabajo (§9.13) ya corta a la página, y el
+cristal no puede pintar más allá de la propia foto.
+
+#### Desenfoque al 20 %
+
+`DEFAULT_BLUR` 0.45 → **0.20**, y `BLUR_MIN` 0.15 → **0.05** para que el nuevo valor por defecto
+no quede pegado al suelo del deslizador. **Sin compensar la legibilidad** (decisión expresa del
+usuario): la sombra y el peso 600 se quedan como estaban.
+
+#### Y uno más, de propina
+
+`page-canvas.tsx` calculaba `saved` al principio de `bootstrap()` y lo consultaba después de dos
+`await` largos (Twenty + la descarga de la imagen). Si el operador aplicaba la plantilla
+entretanto, la rama del titular suelto seguía creyendo que la página estaba en blanco y **añadía
+un segundo titular encima**. Ahora la condición se comprueba en vivo (`hasNewsTemplate` /
+`hasRecordTitle`).
+
+#### Verificado contra el build de producción
+
+`:8788` con CSP real, Playwright, sobre una copia aparte de la base de datos. **Ninguna prueba
+escribió en Twenty.** Una **matriz de 24 comprobaciones** sobre varias noticias reales, midiendo
+tras cada acción que sigue habiendo exactamente una foto, un cristal alineado con ella y un fondo
+que no es el azul de marca: aplicar / rehacer / rehacer otra vez; revertir y volver a aplicar;
+las dos tintas; el deslizador en 0.05, 0.8 y 0.2; poner y vaciar la cifra; los tres formatos y
+vuelta; Cover/Contain con la plantilla puesta; deshacer y rehacer. **Cero fallos, cero errores de
+consola.**
+
+Y las que van al grano de los bugs:
+- **Tras recargar** un borrador guardado: un clic sobre la foto, sobre la zona difuminada y sobre
+  la franja junto al borde derecho **no selecciona nada** (el panel se queda en "Canvas"), y un
+  `Delete` a continuación no se lleva nada. Los tres textos —titular, pie y chip— **sí** abren el
+  panel de texto.
+- **Curación**: un diseño saboteado a mano (sin foto, sin cristal y con `background: #0a2540`)
+  recupera la fotografía y vuelve a blanco al pulsar «Rehacer plantilla».
+- **Logo**: el diseño con tres logos guardados y un cristal construido sobre uno de ellos queda
+  limpio al abrirlo.
+- **Borde derecho**: el recorte ampliado ×3 de la última columna de la página muestra el
+  desenfoque llegando hasta el final; y la energía de bordes en las columnas del borde no supera
+  la del centro (que era el síntoma).
+- **Transición** continua con el desenfoque al 20 %.
+- **Sin regresión**: un evento en modo cartel conserva sus `_tplRole`, su velo y su tema y no
+  aparece ningún `_nwRole`; el registro sin foto sigue cayendo correctamente al azul de marca;
+  persistencia idéntica entre dos aperturas; exportación 2160×2700.
+
+#### La marca, arriba a la derecha y más grande
+
+Petición aparte del usuario: con la foto a página completa, el faro a 66 px y arriba a la
+izquierda se perdía. Pasa a **arriba a la derecha y a 96 px** de alto (`NEWS_LOGO_HEIGHT`), con
+el mismo margen de 48 px. Sigue midiéndose contra la **parte opaca** del PNG y no contra su caja
+(§9.28), que a la derecha significa descontar el lienzo transparente que queda pasado el faro.
+
+#### Límite conocido
+
+Con el desenfoque al 20 % el fondo **conserva bastante detalle**, así que sobre una fotografía
+recargada el titular se lee peor que con el 45 % de §9.30. Es una decisión deliberada del
+usuario; la salida es subir el deslizador en ese post concreto.

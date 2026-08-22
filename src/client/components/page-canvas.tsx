@@ -9,7 +9,13 @@ import {
 } from "../lib/background";
 import { buildEventCopy } from "../lib/event-fields";
 import { findByRole, refreshPosterImage } from "../lib/event-template";
-import { hasNewsTemplate, relayoutNewsTemplate, markRecordTitle } from "../lib/news-template";
+import {
+  hasNewsTemplate,
+  hasRecordTitle,
+  normalizeNewsTemplate,
+  relayoutNewsTemplate,
+  markRecordTitle,
+} from "../lib/news-template";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { GuidesOverlay } from "./guides-overlay";
@@ -183,8 +189,14 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         normalizeBackgroundSource(c);
         // Los diseños guardados cuando el fondo era una capa bloqueada traen
         // `selectable: false` grabado en su JSON; desbloquearlos para poder reencuadrar.
+        // Con la plantilla de noticias puesta, no: ahí la foto va bloqueada a propósito, porque
+        // es el único objeto que recibe clics y un `Delete` despistado la borraba (ver
+        // `lockPhoto` en news-template.ts).
         const bg = findBackgroundImage(c);
-        if (bg) makeBackgroundInteractive(bg);
+        if (bg && !hasNewsTemplate(c)) makeBackgroundInteractive(bg);
+        // …y lo contrario para el chrome de la plantilla de noticias, que Fabric devuelve
+        // clicable porque no serializa `selectable`/`evented` (ver normalizeNewsTemplate).
+        normalizeNewsTemplate(c);
       }
 
       await applyLogoToCanvas(c, sizeRef.current.width, sizeRef.current.height);
@@ -242,12 +254,17 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         // Modo cartel ya compuesto: el cartel de encima también tiene que reflejar la foto
         // nueva, no solo el fondo desenfocado de detrás.
         await refreshPosterImage(c);
-      } else if (!saved && record.title) {
+      } else if (!saved && record.title && !hasNewsTemplate(c) && !hasRecordTitle(c)) {
         // El comportamiento de siempre: el titular como un cuadro de texto suelto. La
         // plantilla de noticias (§9.28) **no** se aplica sola — es una opción del panel
         // "Noticia", así que abrir un registro deja la página como siempre la ha dejado.
         // El titular va marcado para que, si luego se aplica la plantilla, se retire en vez
         // de quedarse flotando encima de la foto.
+        //
+        // `saved` se captura al principio de `bootstrap()` y esto corre después de dos `await`
+        // largos (Twenty + la descarga de la imagen): si el operador ha aplicado la plantilla
+        // entretanto, ese valor ya no describe la página, y sin las dos comprobaciones en vivo
+        // se colaba un segundo titular encima de la plantilla.
         markRecordTitle(editorRef.current.applyTextToCanvas(c, "heading", record.title));
       }
     };

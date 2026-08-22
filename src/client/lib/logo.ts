@@ -82,8 +82,27 @@ function loadLogoImage(): Promise<fabric.FabricImage> {
   return loading;
 }
 
+/**
+ * Si un objeto es la capa del logo.
+ *
+ * Mira **también el origen de la imagen**, y no solo la marca, porque la marca se pierde: Fabric
+ * no serializa `_isLogo` (no está registrada en `customProperties`, y no tendría sentido
+ * registrarla — la capa del logo no se guarda nunca, la quita `withoutLogo`). El problema es lo
+ * que pasa cuando aun así **se cuela una** en el `canvas_json`: al restaurarla vuelve sin marca,
+ * así que ni `withoutLogo` la retiraba al guardar ni `applyLogoToCanvas` la sustituía, y el
+ * diseño acumulaba un logo más por apertura. Peor todavía: al ser una imagen "normal", el
+ * respaldo de `findBackgroundImage` podía **adoptarla como la fotografía de fondo** — y con la
+ * plantilla de noticias eso significaba componer el desenfoque a partir del logo.
+ *
+ * Reconocerla por su `src` cierra el círculo y **cura solo** los diseños ya afectados: en cuanto
+ * se abren, las copias sueltas se identifican, se retiran y dejan de guardarse.
+ */
 export function isLogoObject(obj: fabric.FabricObject | undefined | null): boolean {
-  return !!obj && (obj as any)._isLogo === true;
+  if (!obj) return false;
+  if ((obj as any)._isLogo === true) return true;
+  if (!(obj instanceof fabric.FabricImage)) return false;
+  const src = (obj as any)._srcUrl || obj.getSrc?.() || "";
+  return typeof src === "string" && src.endsWith(LOGO_URL);
 }
 
 /**
@@ -100,8 +119,9 @@ export function bringLogoToFront(canvas: fabric.Canvas): void {
 }
 
 /**
- * La plantilla de noticias quiere la marca **arriba a la izquierda**, a 48 px de los dos
- * bordes y con 66 px de alto (medidas de la guía sobre una página de 1080 de ancho).
+ * La plantilla de noticias lleva la marca **arriba a la derecha**, a 48 px de los dos bordes y
+ * con 96 px de alto (medidas sobre una página de 1080 de ancho). A la izquierda y a 66 px se
+ * quedaba pequeña sobre la foto a página completa.
  *
  * La colocación se **deduce** de si el lienzo tiene la franja de esa plantilla, y no se
  * guarda en ningún sitio, porque la capa del logo no se persiste (`withoutLogo` la saca de
@@ -113,7 +133,7 @@ export function bringLogoToFront(canvas: fabric.Canvas): void {
  * para `bringLogoToFront`, y sería un ciclo.
  */
 const NEWS_REF_WIDTH = 1080;
-const NEWS_LOGO_HEIGHT = 66;
+const NEWS_LOGO_HEIGHT = 96;
 const NEWS_LOGO_INSET = 48;
 
 function hasNewsBand(canvas: fabric.Canvas): boolean {
@@ -133,7 +153,9 @@ function positionLogo(obj: fabric.FabricObject, canvas: fabric.Canvas, canvasWid
     obj.set({
       scaleX: scale,
       scaleY: scale,
-      left: NEWS_LOGO_INSET * s - bounds.x * scale,
+      // El margen se mide contra el **dibujo**, no contra la caja del PNG: a la derecha eso
+      // significa descontar lo que queda de lienzo transparente pasado el faro.
+      left: canvasWidth - NEWS_LOGO_INSET * s - (bounds.x + bounds.width) * scale,
       top: NEWS_LOGO_INSET * s - bounds.y * scale,
       // "Si la zona de la foto es muy clara, añadir sombra proyectada suave únicamente al
       // logotipo". Se pone siempre en vez de medir la luminancia de esa esquina: es posible
@@ -170,8 +192,8 @@ export async function applyLogoToCanvas(
   canvasWidth: number,
   canvasHeight: number
 ): Promise<void> {
-  const existing = canvas.getObjects().find(isLogoObject);
-  if (existing) canvas.remove(existing);
+  // Todas las que haya, no solo la primera — ver `isLogoObject`.
+  for (const existing of canvas.getObjects().filter(isLogoObject)) canvas.remove(existing);
 
   const source = await loadLogoImage();
   const logo = await source.clone();
@@ -197,14 +219,19 @@ export async function applyLogoToCanvas(
 /** Removes the logo layer (if present), runs `fn`, then restores it. Use around any
  *  serialization that must not persist the logo (saves, undo/redo history). */
 export function withoutLogo<T>(canvas: fabric.Canvas, fn: () => T): T {
-  const logo = canvas.getObjects().find(isLogoObject);
-  if (logo) canvas.remove(logo);
+  // Todas, no solo la primera: si alguna vez se colaron copias sueltas en el `canvas_json`
+  // (ver `isLogoObject`), dejar fuera solo una las volvería a guardar.
+  const logos = canvas.getObjects().filter(isLogoObject);
+  for (const logo of logos) canvas.remove(logo);
   try {
     return fn();
   } finally {
-    if (logo) {
-      canvas.add(logo);
-      canvas.bringObjectToFront(logo);
+    // Se restaura **una sola**: las demás eran duplicados que no deberían haber existido, y
+    // esta es la ocasión de dejarlos ir.
+    const keep = logos[logos.length - 1];
+    if (keep) {
+      canvas.add(keep);
+      canvas.bringObjectToFront(keep);
     }
   }
 }

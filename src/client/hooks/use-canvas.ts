@@ -4,6 +4,7 @@ import type { Template } from "../types";
 import { applyLogoToCanvas, isLogoObject, withoutLogo } from "../lib/logo";
 import {
   findBackgroundImage,
+  isBackgroundImage,
   makeBackgroundInteractive,
   downscaleOversizedSource,
   normalizeBackgroundSource,
@@ -45,6 +46,9 @@ import {
   clearNewsTemplate,
   applyNewsVariant,
   setNewsBlur,
+  resyncGlassGeometry,
+  normalizeNewsTemplate,
+  hasNewsTemplate,
   setNewsFigure,
   markRecordTitle,
   type NewsVariant,
@@ -211,6 +215,13 @@ export function useCanvasState() {
       if (!isLogoObject(e.target)) saveHistory(pageId);
     });
     canvas.on("object:modified", (e) => {
+      // Con la plantilla de noticias puesta, la foto va bloqueada (`lockPhoto`) y no debería
+      // llegar aquí — pero si acabara movida por cualquier otra vía, su copia desenfocada tiene
+      // que seguirla o la mitad nítida y la difuminada dejan de encajar. Es solo geometría: no
+      // se vuelve a filtrar nada.
+      if (e.target && isBackgroundImage(e.target) && hasNewsTemplate(canvas)) {
+        resyncGlassGeometry(canvas);
+      }
       if (!isLogoObject(e.target)) saveHistory(pageId);
     });
     canvas.on("object:removed", (e) => {
@@ -795,6 +806,9 @@ export function useCanvasState() {
         clearNewsTemplate(canvas);
         const bg = findBackgroundImage(canvas);
         if (bg) {
+          // La plantilla la tenía bloqueada (ver `lockPhoto`): sin plantilla vuelve a ser un
+          // fondo normal, movible y reencuadrable a mano como cualquier otro.
+          makeBackgroundInteractive(bg);
           // Estaba encajada a la banda superior, que ya no existe.
           fitBackgroundImage(bg, opts.pageWidth, opts.pageHeight, "cover");
           (bg as any)._bgFit = "cover";
@@ -1106,6 +1120,9 @@ export function useCanvasState() {
         // loadFromJSON wipes the clip path (see applyWorkspaceClip) — without this, undo
         // left the design painting across the whole workspace and the page disappeared.
         applyWorkspaceClip(canvas, canvasWidth, canvasHeight);
+        // Fabric no serializa selectable/evented, así que el chrome de la plantilla de
+        // noticias vuelve de aquí siendo clicable (ver normalizeNewsTemplate).
+        normalizeNewsTemplate(canvas);
         // The background is rebuilt from its saved URL, i.e. at full resolution again.
         normalizeBackgroundSource(canvas);
         await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
@@ -1284,6 +1301,7 @@ export function useCanvasState() {
         isRestoringRef.current.add(pageId);
         canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
           applyWorkspaceClip(canvas, template.width, template.height);
+          normalizeNewsTemplate(canvas);
           normalizeBackgroundSource(canvas);
           await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();

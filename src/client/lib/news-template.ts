@@ -76,6 +76,11 @@ export function markRecordTitle(obj: fabric.FabricObject): void {
   (obj as any)[RECORD_TITLE_PROP] = true;
 }
 
+/** Si la página ya tiene el titular suelto que pone el editor al abrir el registro. */
+export function hasRecordTitle(canvas: fabric.Canvas): boolean {
+  return canvas.getObjects().some((o) => (o as any)[RECORD_TITLE_PROP]);
+}
+
 export type NwRole =
   | "glass"
   | "band"
@@ -159,14 +164,18 @@ const ACCOUNT_ALPHA = 0.88;
 /**
  * Cuánto se desenfoca la copia de la fotografía sobre la que va el texto.
  *
- * Es la primera de las tres cosas que hacen legible el titular ahora que no hay ningún bloque
- * de color debajo (las otras dos son el peso de la letra y la sombra), y es la más importante:
- * lo que estorba a la lectura no es el brillo del fondo sino su **detalle**, y un desenfoque
- * fuerte lo elimina dejando el color de la foto intacto. Por eso el valor por defecto es alto
- * y el deslizador del panel llega hasta más.
+ * Es una de las tres cosas que hacen legible el titular ahora que no hay ningún bloque de color
+ * debajo (las otras dos son el peso de la letra y la sombra), y en principio la más eficaz: lo
+ * que estorba a la lectura no es el brillo del fondo sino su **detalle**.
+ *
+ * Aun así el valor por defecto es **bajo, por decisión del usuario**: a 0.20 la fotografía se
+ * sigue reconociendo bajo el texto, que es el efecto que se busca. La contrapartida está
+ * anotada como límite conocido — sobre una foto muy recargada el titular pierde contraste y hay
+ * que subir el deslizador en ese post.
  */
-const DEFAULT_BLUR = 0.45;
-export const BLUR_MIN = 0.15;
+const DEFAULT_BLUR = 0.2;
+// El suelo va por debajo del valor por defecto para que se pueda bajar más, no solo subir.
+export const BLUR_MIN = 0.05;
 export const BLUR_MAX = 0.8;
 
 /**
@@ -177,6 +186,9 @@ export const BLUR_MAX = 0.8;
  * página de 1350), de modo que el desenfoque *crece* en vez de encenderse.
  */
 const FADE_RATIO = 0.1;
+
+/** Cuánto se desborda la máscara del desenfoque más allá de la página, por lado. */
+const MASK_BLEED = 8;
 
 function withAlpha(hex: string, alpha: number): string {
   const color = new fabric.Color(hex);
@@ -577,6 +589,7 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
 
   // La foto primero, que además la manda al fondo: así el índice base de abajo es fiable.
   fitPhotoToPage(canvas, pageWidth, pageHeight);
+  lockPhoto(canvas);
   // Y su copia desenfocada. Va aquí, dentro de `layout`, para que las cinco rutas que mueven
   // el borde del desenfoque o cambian la foto la actualicen sin tener que acordarse de ella
   // (ver el comentario de `syncGlass`).
@@ -637,6 +650,86 @@ function refreshShadows(built: Built): void {
  * vertical, y aquí interesa descartarlo casi todo por abajo: es lo que salva las cabezas en
  * una foto de prensa.
  */
+/**
+ * Deja la fotografía fuera del alcance del ratón mientras la plantilla está puesta.
+ *
+ * No es una comodidad, es lo que impedía usar la plantilla: **todo lo que ésta genera es
+ * `evented: false`** —la franja, el chip, la línea, el cristal— y los textos solo ocupan el
+ * tercio bajo, así que cualquier clic sobre la mitad superior seleccionaba la foto. Desde ahí,
+ * un `Delete` la borraba (y con ella el cristal, que `syncGlass` retira cuando no hay foto) y
+ * un arrastre la descolocaba respecto de su propia copia desenfocada.
+ *
+ * Y no se pierde nada: con la plantilla puesta el encuadre lo decide `fitPhotoToPage`, que
+ * corre en **cada** `layout()` —cambio de formato, de cifra, de desenfoque—, así que un
+ * reencuadre a mano ya se estaba descartando en silencio. Cover/Contain, el deslizador de
+ * escala y "Mejorar foto" siguen funcionando: van por `findBackgroundImage`, no por la
+ * selección. `revertNewsTemplate` la devuelve a interactiva.
+ */
+function lockPhoto(canvas: fabric.Canvas): void {
+  const img = findBackgroundImage(canvas);
+  if (!img) return;
+  img.set({ selectable: false, evented: false, hasControls: false, hoverCursor: "default" });
+}
+
+/**
+ * Re-aplica lo que Fabric **no serializa**: `selectable`, `evented`, `hasControls` y
+ * `hoverCursor`.
+ *
+ * Ninguna de esas cuatro entra en `toObject()`, así que **todo lo que la plantilla marca como
+ * chrome vuelve de `loadFromJSON` siendo clicable y arrastrable**, con los valores por defecto
+ * de Fabric. Y el objeto que más daño hace es el cristal, que cubre la fotografía entera: al
+ * reabrir un borrador, un clic en cualquier punto de la imagen lo seleccionaba a él, de modo
+ * que se podía arrastrar (dejando la mitad nítida y la difuminada descuadradas) o borrar de un
+ * `Delete` — y con la foto pasaba lo mismo.
+ *
+ * Es el mismo patrón que `applyWorkspaceClip` (§9.16) y `normalizeBackgroundSource` (§9.18):
+ * `loadFromJSON` devuelve el lienzo a su estado *serializado*, no al estado en memoria, así que
+ * hay que rehacer a mano lo que no viaja en el JSON. Y por el mismo motivo se llama desde las
+ * **tres** rutas que reconstruyen el lienzo: abrir la página, deshacer/rehacer y aplicar una
+ * plantilla.
+ */
+export function normalizeNewsTemplate(canvas: fabric.Canvas): boolean {
+  if (!hasNewsTemplate(canvas)) return false;
+  for (const obj of canvas.getObjects()) {
+    const role = nwRole(obj);
+    if (role === null) continue;
+    // Los textos sí se editan a mano —es media gracia de la plantilla—; el resto es chrome y
+    // el clic tiene que atravesarlo.
+    if (TEXT_ROLES.has(role)) {
+      obj.set({ selectable: true, evented: true });
+    } else {
+      obj.set({ selectable: false, evented: false, hasControls: false, hoverCursor: "default" });
+    }
+  }
+  lockPhoto(canvas);
+  canvas.requestRenderAll();
+  return true;
+}
+
+/** Los bloques que el operador puede seleccionar y editar. El resto es chrome. */
+const TEXT_ROLES = new Set<NwRole>(["chip", "figure", "unit", "headline", "account"]);
+
+/**
+ * Re-sincroniza la geometría del cristal con la de la foto, sin volver a filtrar nada.
+ *
+ * Red de seguridad para el caso de que la foto acabe movida por cualquier vía que no pase por
+ * `layout()`: sin esto, la mitad nítida y la difuminada dejan de encajar.
+ */
+export function resyncGlassGeometry(canvas: fabric.Canvas): boolean {
+  const photo = findBackgroundImage(canvas);
+  const glass = findByRole(canvas, "glass") as fabric.FabricImage | undefined;
+  if (!photo || !glass) return false;
+  glass.set({
+    scaleX: photo.scaleX ?? 1,
+    scaleY: photo.scaleY ?? 1,
+    left: photo.left ?? 0,
+    top: photo.top ?? 0,
+  });
+  glass.setCoords();
+  canvas.requestRenderAll();
+  return true;
+}
+
 export function fitPhotoToPage(canvas: fabric.Canvas, pageWidth: number, pageHeight: number): void {
   const img = findBackgroundImage(canvas);
   if (!img) return;
@@ -680,11 +773,14 @@ function fadeMask(
   fadeHeight: number,
   pageHeight: number
 ): fabric.FabricImage | null {
-  // El degradado solo varía en vertical, así que basta 1 px de ancho; la altura da la
-  // resolución de la rampa y 512 sobra para cualquiera de los tres formatos.
+  // La rampa solo varía en vertical, así que el ancho no aporta resolución… pero **no puede ser
+  // de 1 px**: al escalar un origen de un solo texel hasta el ancho de la página, la
+  // interpolación deja los bordes a medio alfa y el desenfoque no llegaba al borde derecho.
+  // Con 8 px de ancho los texels interpolados quedan lejos del área que importa.
   const RAMP = 512;
+  const COLS = 8;
   const el = document.createElement("canvas");
-  el.width = 1;
+  el.width = COLS;
   el.height = RAMP;
   const ctx = el.getContext("2d");
   if (!ctx) return null;
@@ -697,10 +793,18 @@ function fadeMask(
   grad.addColorStop(stop, "rgba(0,0,0,1)");
   grad.addColorStop(1, "rgba(0,0,0,1)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 1, RAMP);
+  ctx.fillRect(0, 0, COLS, RAMP);
 
-  const mask = new fabric.FabricImage(el, { left: 0, top: fadeTop });
-  mask.set({ scaleX: pageWidth, scaleY: total / RAMP });
+  // Y además se desborda por los lados y por abajo. Es gratis —el recorte del área de trabajo
+  // (§9.13) ya corta a la página, y el cristal no puede pintar más allá de la propia foto— y
+  // cubre de una vez los dos motivos por los que el borde se quedaba corto: la interpolación
+  // del bitmap y el error de precisión de invertir la matriz del cristal, que va escalado y
+  // desplazado (`absolutePositioned`).
+  const mask = new fabric.FabricImage(el, { left: -MASK_BLEED, top: fadeTop });
+  mask.set({
+    scaleX: (pageWidth + 2 * MASK_BLEED) / COLS,
+    scaleY: (total + MASK_BLEED) / RAMP,
+  });
   mask.absolutePositioned = true;
   return mask;
 }
@@ -874,12 +978,12 @@ export async function composeNewsTemplate(
   applyBackgroundEffects(canvas, NO_EFFECTS);
   applyScrim(canvas, pageWidth, pageHeight, "none", 0);
 
-  if (!findBackgroundImage(canvas)) {
-    // Sin foto, la mitad de arriba se quedaría en el blanco del lienzo — y con la variante
-    // clara ni se vería dónde empieza la franja. El azul de marca deja claro que falta la
-    // imagen sin que el diseño parezca roto.
-    canvas.backgroundColor = NAVY;
-  }
+  // El color del lienzo se fija **en los dos sentidos**, y eso es lo que importa: antes solo se
+  // pintaba de azul cuando faltaba la foto y nunca se deshacía, así que una sola composición sin
+  // imagen dejaba el azul grabado en el `canvas_json` para siempre — el "sólido azul oscuro" que
+  // no había forma de quitar. Ahora, en cuanto vuelve a haber foto, el lienzo vuelve a blanco y
+  // los diseños ya afectados se curan solos.
+  canvas.backgroundColor = findBackgroundImage(canvas) ? "#ffffff" : NAVY;
 
   const built = buildBlocks(copy, pageWidth, variant);
   for (const obj of [built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {

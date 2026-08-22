@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "preact/hooks";
+import { useState, useEffect, useCallback, useRef } from "preact/hooks";
 import { RefreshCw, Check, Minus, Undo2, Wand2 } from "lucide-preact";
 import { useEditor } from "../context";
 import { api } from "../api";
 import { buildNewsCopy, type NewsCopy } from "../lib/news-fields";
+import { findBackgroundImage } from "../lib/background";
 import {
   currentVariant,
   hasNewsTemplate,
@@ -45,6 +46,7 @@ export function NewsPanel() {
     pages,
     getCanvasForPage,
     composeNewsOnCanvas,
+    applyBackgroundToCanvas,
     revertNewsTemplate,
     setNewsVariantOnCanvas,
     setNewsBlurOnCanvas,
@@ -61,10 +63,14 @@ export function NewsPanel() {
   // Mientras nadie haya tocado los botones, la tinta la elige la plantilla midiendo la foto
   // (`chooseInk`). En cuanto el operador elige, manda él — también al rehacer.
   const [inkChosen, setInkChosen] = useState(false);
-  const [blur, setBlur] = useState(0.45);
+  const [blur, setBlur] = useState(0.2);
   const [figure, setFigure] = useState({ valor: "", unidad: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // La URL de la foto del registro, tal como la devolvió la última lectura. Se guarda en un
+  // ref y no en el estado porque solo la consume `compose`, y no debe provocar un render.
+  const imageUrlRef = useRef<string | null>(null);
 
   const recordId = activeDesign?.twenty_record_id ?? null;
   const primaryPage = pages[0] ?? null;
@@ -76,6 +82,7 @@ export function NewsPanel() {
     async (dato?: { valor: string | null; unidad: string | null }): Promise<NewsCopy | null> => {
       if (!recordId) return null;
       const record = await api<TwentyRecord>("GET", `/api/twenty/news/${recordId}`);
+      imageUrlRef.current = record.imageUrl ?? null;
       if (!record.title) return null;
       return buildNewsCopy(record.fields as NewsFields | null, record.title, dato);
     },
@@ -152,13 +159,27 @@ export function NewsPanel() {
         const fresh = await fetchCopy({ valor: figure.valor, unidad: figure.unidad });
         if (!fresh) throw new Error("El registro no tiene titular en Twenty.");
         setCopy(fresh);
+        // Si el registro tiene imagen pero el lienzo no —la borró un `Delete` despistado, o la
+        // primera carga desde Twenty falló—, se recupera **antes** de componer. Sin esto la
+        // plantilla se componía sobre un lienzo sin foto y lo pintaba de azul de marca, que es
+        // el "sólido azul oscuro" del que no había vuelta atrás.
+        if (imageUrlRef.current && !findBackgroundImage(canvas)) {
+          await applyBackgroundToCanvas(
+            canvas,
+            pageId,
+            "image",
+            imageUrlRef.current,
+            "cover",
+            pageSize
+          );
+        }
         await composeNewsOnCanvas(canvas, pageId, fresh, {
           ...pageSize,
           // `undefined` = que la elija la plantilla midiendo la fotografía.
           variant: opts?.variant ?? (inkChosen ? variant : undefined),
         });
       }),
-    [run, fetchCopy, composeNewsOnCanvas, figure, variant, inkChosen, canvasWidth, canvasHeight]
+    [run, fetchCopy, composeNewsOnCanvas, applyBackgroundToCanvas, figure, variant, inkChosen, canvasWidth, canvasHeight]
   );
 
   const revert = useCallback(
