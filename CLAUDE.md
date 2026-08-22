@@ -157,7 +157,8 @@ src/
     │   ├── news-template.ts    — plantilla opcional de noticias: una foto a página completa,
     │   │                         nítida arriba y difuminada abajo, chip, titular y pie sobre
     │   │                         la parte difuminada (§9.28/§9.29/§9.30)
-    │   └── palette.ts          — colores de marca + muestras de los selectores (§9.29)
+    │   ├── palette.ts          — colores de marca + muestras de los selectores (§9.29)
+    │   └── layers.ts           — el modelo del panel de capas: nombres, candado, orden (§9.32)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -170,6 +171,7 @@ src/
         ├── guides-overlay.tsx      — guías de centro imantadas, capa DOM fuera de Fabric (§9.23)
         ├── event-panel.tsx         — sección "Evento" del sidebar izquierdo (§9.26)
         ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28/§9.30)
+        ├── layers-panel.tsx        — sección "Capas": pila de objetos de la página (§9.32)
         ├── color-field.tsx         — selector de color con muestras de marca (§9.29)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
@@ -2568,6 +2570,11 @@ Dos cambios:
 
 #### La fotografía se bloquea mientras la plantilla está puesta
 
+> **Revertido en §9.32.** `lockPhoto` ya no existe: la foto se arrastra y se escala como
+> cualquier fondo, y su encuadre sobrevive a los recálculos de la plantilla. El razonamiento
+> de abajo se conserva porque explica *por qué* se bloqueó y qué había que resolver antes de
+> poder desbloquearla.
+
 Es la raíz de los bugs 1 y 3 vista desde el otro lado: **con la plantilla puesta la foto era el
 único objeto que recibía clics**, porque todo el chrome es `evented: false` y los textos solo
 ocupan el tercio bajo. Cualquier clic sobre la mitad superior la seleccionaba.
@@ -2644,3 +2651,147 @@ el mismo margen de 48 px. Sigue midiéndose contra la **parte opaca** del PNG y 
 Con el desenfoque al 20 % el fondo **conserva bastante detalle**, así que sobre una fotografía
 recargada el titular se lee peor que con el 45 % de §9.30. Es una decisión deliberada del
 usuario; la salida es subir el deslizador en ese post concreto.
+
+
+### 9.32 La foto, reencuadrable con la plantilla puesta, y el panel de capas
+
+Dos peticiones del usuario sobre lo que dejó §9.31: que con la plantilla de noticias se pueda
+mover y redimensionar el fondo, y que haya una sección de capas, «que suele ser muy útil en
+este tipo de servicios».
+
+#### Por qué la foto no se podía tocar, y por qué eran dos bloqueos
+
+`lockPhoto` (§9.31) la dejaba `selectable: false, evented: false`. Pero **desbloquearla sola no
+habría servido de nada**: `layout()` llama a `fitPhotoToPage` en *cada* pasada —componer,
+cambiar de formato, mover el deslizador de desenfoque, poner la cifra, rehacer la plantilla—,
+así que cualquier reencuadre a mano habría durado hasta la siguiente acción. Ese era además el
+argumento con el que §9.31 justificaba el bloqueo: «un reencuadre a mano ya se estaba
+descartando en silencio».
+
+Así que primero hay que hacer que el encuadre signifique algo. `_nwFramed` es una marca
+persistida sobre la foto —registrada en el mismo bucle de `customProperties` que `_nwRole`— que
+dice «esto lo ha encuadrado el operador»; `fitPhotoToPage` se aparta cuando la ve, salvo que se
+le pase `force`. Con eso, `lockPhoto` deja de tener sentido y se sustituye por `unlockPhoto`,
+que llama a `makeBackgroundInteractive` — exactamente lo que ya hacía un fondo sin plantilla.
+
+El riesgo que cerraba el bloqueo (un `Delete` despistado se llevaba la foto, y con ella el
+cristal) tiene hoy dos salidas que en §9.31 no existían: «Rehacer plantilla» la recupera desde
+el registro, y el candado del panel de capas la fija cuando el encuadre ya está bien.
+
+**Quién resetea el encuadre y quién lo respeta**, que es toda la decisión de diseño:
+
+| | encuadre manual |
+|---|---|
+| deslizador de desenfoque, cifra, «Rehacer plantilla» | se conserva |
+| refresco desde Twenty al reabrir | se conserva (viaja al objeto de reemplazo) |
+| **Cover** (panel derecho) | **resetea** — es el botón de vuelta |
+| **Contain** | se respeta y se marca: es un encuadre elegido a propósito |
+| cambio de formato | resetea — ese encuadre describía una página que ya no existe |
+| «Volver al diseño normal» | resetea |
+
+#### El cristal tiene que seguir a la foto *durante* el arrastre
+
+`resyncGlassGeometry` ya existía como red de seguridad en `object:modified`. No basta: si la
+copia desenfocada solo se recolocara al soltar, media página se movería y la otra media se
+quedaría quieta durante todo el gesto — el aspecto exacto de algo roto. Se engancha también a
+`object:moving` y `object:scaling`, que es barato porque solo copia la transformación; volver a
+filtrar el bitmap en cada tick del ratón sí sería impagable.
+
+Medido: durante el arrastre, la zona difuminada cambia un **0,178 %** de sus píxeles entre la
+captura de medio arrastre y la de después de soltar — del orden del **0,134 %** que cambia la
+foto nítida, que es puro repintado de Fabric (desactiva la caché del objeto mientras se
+transforma y la reactiva al soltar). Si el cristal se hubiera quedado atrás serían el **30 %**,
+calculado comparando esa misma zona consigo misma desplazada lo que duró el arrastre.
+
+#### El panel de capas
+
+Sección «Capas» en el rail izquierdo. Resuelve tres cosas que no tenían salida desde la
+interfaz: seleccionar algo tapado por otra cosa (con la plantilla puesta, el cristal cubre la
+fotografía entera), ocultar una capa un momento para ver lo que hay debajo, y reordenar sin
+depender del orden en que se añadieron los objetos.
+
+[`lib/layers.ts`](src/client/lib/layers.ts) tiene el modelo; el componente solo pinta.
+
+- **Nombres antes que tipos.** Se lee primero `_nwRole` y `_tplRole`: «Titular» dice mucho más
+  que «Texto» y «Desenfoque» mucho más que «Imagen» — y son justo las capas que el operador no
+  ha puesto él. Dos nombres se eligieron contra su clave: `band` es **«Zona de texto»**, porque
+  desde §9.30 no pinta nada y llamarla «franja» haría buscar en el lienzo un bloque que no
+  existe; y `chipBg` es **«Sección (fondo)»**, para que se lea como la pareja de «Sección».
+- **El logo no se lista.** No se persiste (`withoutLogo` lo saca de todo lo que se serializa) y
+  `applyLogoToCanvas` lo reconstruye al abrir la página y en cada cambio de tamaño: ofrecerlo
+  como capa editable sería ofrecer cambios que se tiran.
+- **El ojo no necesita nada especial**: `visible` es una propiedad estándar de Fabric y se
+  serializa sola (verificado en `index.mjs:8138`). El candado **sí**: ninguna de las cuatro
+  propiedades que lo hacen efectivo —`selectable`, `evented`, `hasControls`, `hoverCursor`—
+  entra en `toObject()`. Ese es el bug de §9.31 otra vez, así que `_locked` es una propiedad
+  propia y `applyLockState` la vuelve a traducir tras cada `loadFromJSON`, desde las **tres**
+  rutas que reconstruyen un lienzo (abrir la página, deshacer/rehacer, aplicar una plantilla).
+- **Un candado explícito manda sobre el papel del objeto.** `normalizeNewsTemplate` fija
+  `selectable`/`evented` por rol; ahora un `_locked` explícito gana, en los dos sentidos. Es lo
+  que permite **desbloquear el cristal** para ver la foto nítida y que la decisión sobreviva a
+  recargar.
+
+**Registro de `_locked`: una línea, no un bucle.** El `concat` de `toObject` es
+`propertiesToInclude.concat(FabricObject.customProperties, this.constructor.customProperties)`,
+o sea que **la lista de la clase base se añade siempre**, pase lo que pase con la de la
+subclase. `_nwRole` y `_tplRole` se registran clase por clase porque el problema allí era el
+contrario (una subclase con array propio *tapa* el heredado); para una propiedad nueva basta la
+base. Se repite igualmente en las clases que declaran array propio, que cuesta una línea y deja
+de depender de un detalle interno de Fabric.
+
+#### Tres cosas que solo aparecieron al probarlo
+
+- **El candado de la foto se perdía en cada apertura.** El refresco desde Twenty
+  (`applyBackgroundToCanvas`, §9.4) **sustituye el objeto entero**, y arrastraba `_bgFit` y los
+  filtros pero no el candado — el mismo agujero por el que ya se habían perdido antes el
+  encuadre y los efectos. Se arrastra ahora **siempre**, dentro o fuera de `canKeepFraming`: un
+  candado no describe este bitmap concreto sino el papel de «capa de fondo».
+- **Soltar entre dos filas no hacía nada.** Entre fila y fila hay dos píxeles de separación, y
+  ahí el `drop` no llegaba a ninguna: el arrastre se perdía en silencio. La lista lo recoge
+  ahora ella misma y aplica el hueco que el indicador estuviera enseñando.
+- **La fila no se podía arrastrar por casi ningún sitio.** Dos causas encadenadas, las dos
+  invisibles leyendo el código: **Chromium no arranca un arrastre desde un elemento de
+  formulario** (ni con `draggable={false}`, probado), así que con la zona del nombre siendo un
+  `<button>` solo servían los pocos píxeles del asa; y el `onMouseDown` con `preventDefault`
+  que llevaba —el patrón `keepFocus` de §9.21— **cancela el arrastre que el navegador iba a
+  iniciar**. La zona del nombre pasa a ser un `<div role="button" tabIndex>` sin
+  `preventDefault`; los botones de la derecha lo conservan, porque ahí sí importa y por ahí no
+  se arrastra.
+
+#### Verificado contra el build de producción
+
+`pnpm run build` + `pnpm run start` con la CSP real (regla de §9.11/§10.3), con Playwright y
+ratón real, sobre una **copia aparte de la base de datos**. 35 comprobaciones, todas en verde.
+
+- **Fondo**: la foto se arrastra y se mueve de verdad (leído del `canvas_json` por la API, no de
+  la pantalla); el cristal queda alineado y **la sigue durante el gesto** (las cifras de arriba);
+  el encuadre sobrevive al desenfoque, a la cifra, a rehacer la plantilla y a recargar; **Cover**
+  lo devuelve al automático con precisión exacta; el cambio de formato lo descarta y deja el
+  margen inferior en 48,0 px; ningún `src` es una `data:` URL.
+- **Capas**: la lista nombra las ocho piezas y no el logo; el clic selecciona; ocultar el
+  desenfoque persiste y **el PNG exportado tampoco lo lleva** (0 píxeles del color en 2160×2700);
+  bloquear la foto impide seleccionarla y `Delete` no se la lleva; los dos estados sobreviven a
+  recargar (que es lo que prueba `applyLockState`); las flechas se deshabilitan en los extremos;
+  reordenar con botón y arrastrando, en las dos mitades de la fila destino, persiste; `Ctrl+Z`
+  deshace la reordenación.
+- **Sin regresión**: un evento conserva sus `_tplRole`, su velo y su tema y no aparece ningún
+  `_nwRole`, y su panel nombra sus bloques; un diseño sin CRM sigue igual; **un borrador guardado
+  antes de este cambio** (fabricado quitándole las marcas nuevas y grabándole `selectable: false`
+  en la foto) abre con la foto ya desbloqueada, sin duplicar nada y con la maqueta intacta;
+  «Guardar en Twenty» completa y escribe en `imagenEditada` — **escritura de prueba revertida a
+  vacío después**, como siempre. Cero errores de consola en todos los pasos.
+
+#### Límites conocidos
+
+- **Reordenar las piezas de la plantilla entre sí no sobrevive a un re-maquetado**: `layout()`
+  las devuelve a su tramo contiguo encima de la foto en cada pasada. Lo que el operador añade a
+  mano sí conserva su posición relativa (queda por encima), que es el caso que importa.
+- **Ocultar una capa la quita también de la exportación.** Es lo estándar en un panel de capas,
+  pero conviene decirlo: una capa oculta no es una capa «en pausa».
+- **La fila no se arrastra agarrándola por los botones de la derecha**, por lo que dice arriba
+  sobre Chromium. Se agarra por el nombre, que es la mitad izquierda; las flechas cubren el resto.
+- **`chooseInk` no se recalcula al reencuadrar.** La tinta se eligió midiendo la zona baja de la
+  foto en su encuadre anterior; si el reencuadre cambia mucho esa zona, la salida son los dos
+  botones de tinta del panel «Noticia».
+- **Con la foto ya interactiva, un `Delete` puede borrarla.** Es el riesgo que §9.31 cerró
+  bloqueándola; hoy se recupera con «Rehacer plantilla» o se previene con el candado.

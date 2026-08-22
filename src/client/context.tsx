@@ -7,6 +7,7 @@ import type { NewsCopy } from "./lib/news-fields";
 import type { NewsVariant } from "./lib/news-template";
 import type * as fabric from "fabric";
 import type { BackgroundEffects, ScrimKind } from "./lib/effects";
+import type { LayerInfo } from "./lib/layers";
 
 export interface CanvasSize {
   label: string;
@@ -29,6 +30,21 @@ export interface EditorContextValue {
   canvas: fabric.Canvas | null;
   selectedObject: fabric.FabricObject | null;
   selectionVersion: number;
+
+  // Capas (lib/layers.ts). Todas operan sobre la página activa.
+  /** Cambia al añadir, quitar, mover, ocultar o bloquear algo — dispara el re-render del panel. */
+  layersVersion: number;
+  /** Las capas de arriba abajo, sin el logo. */
+  getLayers: () => LayerInfo[];
+  selectLayer: (obj: fabric.FabricObject) => void;
+  setLayerVisibility: (obj: fabric.FabricObject, visible: boolean) => void;
+  setLayerLock: (obj: fabric.FabricObject, locked: boolean) => void;
+  /** Sube (`+1`) o baja (`-1`) una capa en el sentido del panel. */
+  shiftLayer: (obj: fabric.FabricObject, delta: number) => void;
+  /** Soltar la fila `fromRow` sobre la posición `toRow` de la lista. */
+  dropLayer: (fromRow: number, toRow: number) => void;
+  removeLayer: (obj: fabric.FabricObject) => void;
+
   canvasWidth: number;
   canvasHeight: number;
   zoom: number;

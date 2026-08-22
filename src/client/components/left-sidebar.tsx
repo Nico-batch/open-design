@@ -13,17 +13,28 @@ import {
   WandSparkles,
   CalendarDays,
   Newspaper,
+  Layers,
 } from "lucide-preact";
 import { useEditor } from "../context";
 import { TemplateCard } from "./template-card";
 import { DesignList } from "./design-list";
 import { EventPanel } from "./event-panel";
 import { NewsPanel } from "./news-panel";
+import { LayersPanel } from "./layers-panel";
 import { coerceTwentyObjectType } from "../lib/twenty";
 import { BRAND } from "../lib/palette";
 import { ColorField } from "./color-field";
 
-type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs" | "event" | "news";
+type Section =
+  | "templates"
+  | "text"
+  | "shapes"
+  | "images"
+  | "background"
+  | "layers"
+  | "designs"
+  | "event"
+  | "news";
 
 const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "templates", icon: Sparkles, label: "Templates" },
@@ -31,6 +42,7 @@ const SECTIONS: { key: Section; icon: typeof LayoutGrid; label: string }[] = [
   { key: "text", icon: Type, label: "Text" },
   { key: "images", icon: Upload, label: "Uploads" },
   { key: "background", icon: Palette, label: "Bg" },
+  { key: "layers", icon: Layers, label: "Capas" },
   { key: "designs", icon: LayoutGrid, label: "Designs" },
 ];
 
@@ -53,6 +65,7 @@ const SECTION_TITLES: Record<Section, string> = {
   text: "Text",
   images: "Uploads",
   background: "Background",
+  layers: "Capas",
   designs: "Designs",
   event: "Evento",
   news: "Noticia",
@@ -492,6 +505,8 @@ export function LeftSidebar() {
                     </div>
                   </div>
                 )}
+
+                {activeSection === "layers" && <LayersPanel />}
 
                 {activeSection === "event" && <EventPanel />}
                 {activeSection === "news" && <NewsPanel />}

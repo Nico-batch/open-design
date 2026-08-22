@@ -2,7 +2,11 @@ import * as fabric from "fabric";
 import type { NewsCopy } from "./news-fields";
 import { ACCOUNT_HANDLE } from "./news-fields";
 import { applyBackgroundEffects, applyScrim, NO_EFFECTS } from "./effects";
-import { findBackgroundImage, downscaleOversizedSource } from "./background";
+import {
+  findBackgroundImage,
+  downscaleOversizedSource,
+  makeBackgroundInteractive,
+} from "./background";
 import { bringLogoToFront } from "./logo";
 import { syncCanvasFonts } from "./fonts";
 import { BRAND } from "./palette";
@@ -51,7 +55,42 @@ import { BRAND } from "./palette";
 for (const klass of [fabric.Textbox, fabric.Rect, fabric.FabricImage] as unknown as Array<{
   customProperties?: string[];
 }>) {
-  klass.customProperties = [...(klass.customProperties ?? []), "_nwRole", "_nwVariant"];
+  klass.customProperties = [
+    ...(klass.customProperties ?? []),
+    "_nwRole",
+    "_nwVariant",
+    // Solo lo lleva la fotografía, pero se registra aquí por comodidad: es el mismo bucle y
+    // una propiedad de más en un `Rect` que nunca la tiene no cuesta nada. Ver `PHOTO_FRAMED`.
+    "_nwFramed",
+  ];
+}
+
+/**
+ * Marca de "esta foto la ha reencuadrado el operador a mano".
+ *
+ * Existe porque `layout()` corre en **cada** cambio de la plantilla —formato, desenfoque,
+ * cifra, rehacer— y hasta ahora reencajaba la foto en todas ellas, de modo que un arrastre
+ * duraba hasta la siguiente acción. Con esta marca `fitPhotoToPage` se aparta y el encuadre
+ * manual es el que manda; las rutas que sí deben resetearlo (Cover, cambio de formato,
+ * revertir la plantilla) la borran a propósito con `clearPhotoFraming`.
+ */
+const PHOTO_FRAMED = "_nwFramed";
+
+/** Si la fotografía de esta página lleva un encuadre puesto a mano. */
+export function isPhotoFramed(canvas: fabric.Canvas): boolean {
+  return (findBackgroundImage(canvas) as any)?.[PHOTO_FRAMED] === true;
+}
+
+/** Declara el encuadre actual de la foto como decisión del operador. */
+export function markPhotoFramed(canvas: fabric.Canvas): void {
+  const img = findBackgroundImage(canvas);
+  if (img) (img as any)[PHOTO_FRAMED] = true;
+}
+
+/** Devuelve la foto al encuadre automático de la plantilla en el siguiente `layout()`. */
+export function clearPhotoFraming(canvas: fabric.Canvas): void {
+  const img = findBackgroundImage(canvas);
+  if (img) delete (img as any)[PHOTO_FRAMED];
 }
 
 /**
@@ -588,8 +627,9 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
   built.account.setCoords();
 
   // La foto primero, que además la manda al fondo: así el índice base de abajo es fiable.
+  // `fitPhotoToPage` se aparta sola si el operador ya la ha reencuadrado a mano.
   fitPhotoToPage(canvas, pageWidth, pageHeight);
-  lockPhoto(canvas);
+  unlockPhoto(canvas);
   // Y su copia desenfocada. Va aquí, dentro de `layout`, para que las cinco rutas que mueven
   // el borde del desenfoque o cambian la foto la actualicen sin tener que acordarse de ella
   // (ver el comentario de `syncGlass`).
@@ -639,36 +679,27 @@ function refreshShadows(built: Built): void {
 }
 
 /**
- * Encaja la foto en la **página entera**: cover sobre `pageWidth × pageHeight`, centrada en
- * horizontal y anclada al tercio alto en vertical (ver PHOTO_ANCHOR).
+ * Deja la fotografía manejable con el ratón, igual que un fondo sin plantilla.
  *
- * Hasta §9.30 se encajaba solo contra la banda superior, porque debajo iba un bloque opaco y
- * lo que quedara tapado daba igual. Ahora la mitad de abajo **es la misma foto**, así que
- * tiene que llegar hasta el borde inferior o no habría nada que desenfocar.
+ * Hasta §9.31 hacía lo contrario (`lockPhoto`): la bloqueaba, porque era el único objeto del
+ * lienzo que recibía clics —todo lo que genera la plantilla es `evented: false`— y un `Delete`
+ * despistado la borraba. El argumento que lo sostenía era que el encuadre lo decidía
+ * `fitPhotoToPage` en cada `layout()`, así que un reencuadre a mano ya se descartaba solo.
  *
- * No se reutiliza `fitBackgroundImage` de `use-canvas.ts` porque esa centra el recorte
- * vertical, y aquí interesa descartarlo casi todo por abajo: es lo que salva las cabezas en
- * una foto de prensa.
+ * **Ese argumento ya no vale**: `fitPhotoToPage` respeta ahora el encuadre manual
+ * (`PHOTO_FRAMED`), de modo que arrastrar la foto significa algo y bloquearla solo estorba.
+ * El riesgo que cerraba el bloqueo tiene hoy dos salidas que entonces no existían — "Rehacer
+ * plantilla" recupera la foto desde el registro, y el candado del panel de capas la fija
+ * cuando el encuadre ya está bien.
+ *
+ * Respeta un candado explícito: si el operador la ha bloqueado desde el panel de capas, esa
+ * decisión gana. Se lee `_locked` a pelo en vez de importar `layers.ts`, que importa este
+ * módulo — sería un ciclo (el mismo motivo por el que `logo.ts` lee `_nwRole` a pelo).
  */
-/**
- * Deja la fotografía fuera del alcance del ratón mientras la plantilla está puesta.
- *
- * No es una comodidad, es lo que impedía usar la plantilla: **todo lo que ésta genera es
- * `evented: false`** —la franja, el chip, la línea, el cristal— y los textos solo ocupan el
- * tercio bajo, así que cualquier clic sobre la mitad superior seleccionaba la foto. Desde ahí,
- * un `Delete` la borraba (y con ella el cristal, que `syncGlass` retira cuando no hay foto) y
- * un arrastre la descolocaba respecto de su propia copia desenfocada.
- *
- * Y no se pierde nada: con la plantilla puesta el encuadre lo decide `fitPhotoToPage`, que
- * corre en **cada** `layout()` —cambio de formato, de cifra, de desenfoque—, así que un
- * reencuadre a mano ya se estaba descartando en silencio. Cover/Contain, el deslizador de
- * escala y "Mejorar foto" siguen funcionando: van por `findBackgroundImage`, no por la
- * selección. `revertNewsTemplate` la devuelve a interactiva.
- */
-function lockPhoto(canvas: fabric.Canvas): void {
+function unlockPhoto(canvas: fabric.Canvas): void {
   const img = findBackgroundImage(canvas);
-  if (!img) return;
-  img.set({ selectable: false, evented: false, hasControls: false, hoverCursor: "default" });
+  if (!img || (img as any)._locked === true) return;
+  makeBackgroundInteractive(img);
 }
 
 /**
@@ -693,15 +724,24 @@ export function normalizeNewsTemplate(canvas: fabric.Canvas): boolean {
   for (const obj of canvas.getObjects()) {
     const role = nwRole(obj);
     if (role === null) continue;
+    // Un candado puesto a mano desde el panel de capas manda sobre el papel del objeto: es
+    // lo que permite **desbloquear el cristal** para ver la foto nítida y que la decisión
+    // sobreviva a recargar. `_locked` sí se serializa (lo registra `layers.ts`); las cuatro
+    // propiedades de interacción que hay debajo, no — de ahí toda esta función.
+    const locked = (obj as any)._locked;
+    if (locked === true) {
+      obj.set({ selectable: false, evented: false, hasControls: false, hoverCursor: "default" });
+      continue;
+    }
     // Los textos sí se editan a mano —es media gracia de la plantilla—; el resto es chrome y
     // el clic tiene que atravesarlo.
-    if (TEXT_ROLES.has(role)) {
-      obj.set({ selectable: true, evented: true });
+    if (locked === false || TEXT_ROLES.has(role)) {
+      obj.set({ selectable: true, evented: true, hasControls: true, hoverCursor: undefined });
     } else {
       obj.set({ selectable: false, evented: false, hasControls: false, hoverCursor: "default" });
     }
   }
-  lockPhoto(canvas);
+  unlockPhoto(canvas);
   canvas.requestRenderAll();
   return true;
 }
@@ -730,9 +770,34 @@ export function resyncGlassGeometry(canvas: fabric.Canvas): boolean {
   return true;
 }
 
-export function fitPhotoToPage(canvas: fabric.Canvas, pageWidth: number, pageHeight: number): void {
+/**
+ * Encaja la foto en la **página entera**: cover sobre `pageWidth × pageHeight`, centrada en
+ * horizontal y anclada al tercio alto en vertical (ver PHOTO_ANCHOR).
+ *
+ * Hasta §9.30 se encajaba solo contra la banda superior, porque debajo iba un bloque opaco y
+ * lo que quedara tapado daba igual. Ahora la mitad de abajo **es la misma foto**, así que
+ * tiene que llegar hasta el borde inferior o no habría nada que desenfocar.
+ *
+ * **No toca una foto reencuadrada a mano** salvo que se pase `force`. Ese es el punto que
+ * hace utilizable el arrastre: `layout()` llama aquí en cada cambio de la plantilla, así que
+ * sin la excepción el encuadre del operador duraría hasta la siguiente acción.
+ *
+ * No se reutiliza `fitBackgroundImage` de `use-canvas.ts` porque esa centra el recorte
+ * vertical, y aquí interesa descartarlo casi todo por abajo: es lo que salva las cabezas en
+ * una foto de prensa.
+ */
+export function fitPhotoToPage(
+  canvas: fabric.Canvas,
+  pageWidth: number,
+  pageHeight: number,
+  opts?: { force?: boolean }
+): void {
   const img = findBackgroundImage(canvas);
   if (!img) return;
+  // El encuadre manual gana salvo que quien llama lo esté reseteando a propósito (Cover,
+  // cambio de formato, revertir). Sin esto, arrastrar la foto duraba hasta el siguiente
+  // `layout()`, que es cualquier cambio de la plantilla.
+  if (!opts?.force && (img as any)[PHOTO_FRAMED] === true) return;
   const natW = img.width || 1;
   const natH = img.height || 1;
   const scale = Math.max(pageWidth / natW, pageHeight / natH);

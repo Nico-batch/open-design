@@ -302,6 +302,14 @@ export function NewsPanel() {
         </button>
       )}
 
+      {applied && (
+        <p class="text-zinc-500 text-[10px] mb-3 leading-snug">
+          La foto se puede arrastrar y escalar en el lienzo, y su encuadre se conserva al
+          cambiar el desenfoque, la cifra o al rehacer la plantilla. <strong>Cover</strong> (en
+          el panel derecho, al seleccionarla) devuelve el encuadre automático.
+        </p>
+      )}
+
       <p class="text-zinc-400 text-[11px] font-semibold mb-1">Tinta</p>
       <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">
         Al aplicar la plantilla se elige sola midiendo la luminosidad de la foto en la zona del

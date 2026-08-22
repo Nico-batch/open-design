@@ -16,6 +16,7 @@ import {
   relayoutNewsTemplate,
   markRecordTitle,
 } from "../lib/news-template";
+import { applyLockState } from "../lib/layers";
 import { syncCanvasFonts } from "../lib/fonts";
 import { applyWorkspaceGeometry, applyWorkspaceClip, workspaceSize, WORKSPACE_PADDING } from "../lib/workspace";
 import { GuidesOverlay } from "./guides-overlay";
@@ -188,15 +189,19 @@ export function PageCanvas({ page, isActive, width, height, onActivate }: PageCa
         // completa otra vez, y el filtro las truncaría por encima de 4096 px (§9.18).
         normalizeBackgroundSource(c);
         // Los diseños guardados cuando el fondo era una capa bloqueada traen
-        // `selectable: false` grabado en su JSON; desbloquearlos para poder reencuadrar.
-        // Con la plantilla de noticias puesta, no: ahí la foto va bloqueada a propósito, porque
-        // es el único objeto que recibe clics y un `Delete` despistado la borraba (ver
-        // `lockPhoto` en news-template.ts).
+        // `selectable: false` grabado en su JSON; desbloquearlos para poder reencuadrar. Con
+        // la plantilla de noticias puesta **también**: desde §9.32 la foto se arrastra y se
+        // escala como cualquier fondo, y su encuadre sobrevive a los recálculos de la
+        // plantilla. `normalizeNewsTemplate` lo repite un par de líneas más abajo, pero
+        // dejarlo explícito evita que un cambio de orden lo rompa en silencio.
         const bg = findBackgroundImage(c);
-        if (bg && !hasNewsTemplate(c)) makeBackgroundInteractive(bg);
+        if (bg && (bg as any)._locked !== true) makeBackgroundInteractive(bg);
         // …y lo contrario para el chrome de la plantilla de noticias, que Fabric devuelve
         // clicable porque no serializa `selectable`/`evented` (ver normalizeNewsTemplate).
         normalizeNewsTemplate(c);
+        // Misma historia con los candados del panel de capas: `_locked` sí viaja en el JSON,
+        // pero las propiedades que lo hacen efectivo no (ver lib/layers.ts).
+        applyLockState(c);
       }
 
       await applyLogoToCanvas(c, sizeRef.current.width, sizeRef.current.height);

@@ -51,9 +51,20 @@ import {
   hasNewsTemplate,
   setNewsFigure,
   markRecordTitle,
+  markPhotoFramed,
+  clearPhotoFraming,
   type NewsVariant,
 } from "../lib/news-template";
 import type { NewsCopy } from "../lib/news-fields";
+import {
+  applyLockState,
+  listLayers,
+  moveLayer,
+  reorderByRow,
+  setLayerLocked,
+  setLayerVisible,
+  type LayerInfo,
+} from "../lib/layers";
 
 const MAX_HISTORY = 50;
 
@@ -98,6 +109,11 @@ export function useCanvasState() {
   // live values off it (see the note at the top of this file).
   const [selectionVersion, setSelectionVersion] = useState(0);
   const refreshSelection = useCallback(() => setSelectionVersion((v) => v + 1), []);
+  // El panel de capas necesita su propio contador: `selectionVersion` no se toca al **añadir
+  // o quitar** objetos, que es justo cuando la lista cambia. Los objetos de Fabric se mutan en
+  // el sitio, así que su identidad nunca cambia y sin un contador Preact no re-renderiza.
+  const [layersVersion, setLayersVersion] = useState(0);
+  const refreshLayers = useCallback(() => setLayersVersion((v) => v + 1), []);
   const [canvasWidth, setCanvasWidth] = useState(1080);
   const [canvasHeight, setCanvasHeight] = useState(1080);
   const [zoom, setZoom] = useState(0.58);
@@ -212,20 +228,37 @@ export function useCanvasState() {
     // noise in undo/redo, withoutLogo()'s own remove/add would otherwise re-enter
     // saveHistory (which calls withoutLogo) and blow the call stack.
     canvas.on("object:added", (e) => {
-      if (!isLogoObject(e.target)) saveHistory(pageId);
+      if (isLogoObject(e.target)) return;
+      saveHistory(pageId);
+      refreshLayers();
     });
-    canvas.on("object:modified", (e) => {
-      // Con la plantilla de noticias puesta, la foto va bloqueada (`lockPhoto`) y no debería
-      // llegar aquí — pero si acabara movida por cualquier otra vía, su copia desenfocada tiene
-      // que seguirla o la mitad nítida y la difuminada dejan de encajar. Es solo geometría: no
-      // se vuelve a filtrar nada.
+    // Con la plantilla de noticias puesta, la foto se puede arrastrar y escalar, y su copia
+    // desenfocada tiene que seguirla **mientras dura el gesto**: si solo se resincronizara al
+    // soltar, media página se movería y la otra media se quedaría quieta, que es exactamente
+    // el aspecto de algo roto. Es barato — `resyncGlassGeometry` solo copia la transformación,
+    // no vuelve a filtrar el bitmap (eso sí sería impagable en cada tick del ratón).
+    const followGlass = (e: { target?: fabric.FabricObject }) => {
       if (e.target && isBackgroundImage(e.target) && hasNewsTemplate(canvas)) {
         resyncGlassGeometry(canvas);
       }
+    };
+    canvas.on("object:moving", followGlass);
+    canvas.on("object:scaling", followGlass);
+    canvas.on("object:modified", (e) => {
+      followGlass(e);
+      // Y al soltar, el encuadre pasa a ser una decisión del operador: `fitPhotoToPage` deja
+      // de pisarlo en los siguientes `layout()` (cambio de desenfoque, de cifra, rehacer).
+      if (e.target && isBackgroundImage(e.target) && hasNewsTemplate(canvas)) {
+        markPhotoFramed(canvas);
+      }
       if (!isLogoObject(e.target)) saveHistory(pageId);
+      // Editar un texto le cambia el nombre a su capa; moverlo, cuál tapa a cuál.
+      refreshLayers();
     });
     canvas.on("object:removed", (e) => {
-      if (!isLogoObject(e.target)) saveHistory(pageId);
+      if (isLogoObject(e.target)) return;
+      saveHistory(pageId);
+      refreshLayers();
     });
 
     // Typing an emoji is the one case where a font arrives *mid-edit*: the emoji font is
@@ -271,7 +304,7 @@ export function useCanvasState() {
       historyMapRef.current.set(pageId, { entries: [json], index: 0 });
       updateUndoRedoState(pageId);
     }, 100);
-  }, [saveHistory, updateUndoRedoState, refreshSelection, reportSnap]);
+  }, [saveHistory, updateUndoRedoState, refreshSelection, refreshLayers, reportSnap]);
 
   /** El canvas de una página concreta. "Rehacer plantilla" siempre actúa sobre la página
    *  principal del diseño, que no tiene por qué ser la que el operador esté mirando. */
@@ -516,6 +549,11 @@ export function useCanvasState() {
               img.filters = previous.filters;
               img.applyFilters();
             }
+            // Y la marca de "esto lo encuadró el operador", por el mismo motivo: sin ella, el
+            // primer `layout()` tras reabrir el borrador devolvería la foto al encuadre
+            // automático de la plantilla. Solo viaja cuando la foto es la misma (es la
+            // condición de canKeepFraming); si es otra, ese encuadre describía otra imagen.
+            if ((previous as any)._nwFramed) (img as any)._nwFramed = true;
           } else {
             fitBackgroundImage(img, pageW, pageH, fit);
             (img as any)._bgFit = fit;
@@ -523,6 +561,14 @@ export function useCanvasState() {
 
           // Movable/resizable so the operator can reframe it — see lib/background.ts.
           makeBackgroundInteractive(img);
+          // Y el candado del panel de capas, **siempre**, dentro o fuera de canKeepFraming: no
+          // describe este bitmap concreto sino el papel de "capa de fondo", así que sobrevive
+          // incluso a cambiar de fotografía. Sin esto se perdía en cada apertura, porque el
+          // refresco desde Twenty sustituye el objeto entero (el mismo agujero por el que se
+          // perdían el encuadre y los filtros).
+          if (previous && (previous as any)._locked === true) {
+            setLayerLocked(canvas, img, true);
+          }
           if (previous) canvas.remove(previous);
           (img as any)._isBgImage = true;
           img.setCoords();
@@ -561,8 +607,13 @@ export function useCanvasState() {
       fitBackgroundImage(bgObj, canvasWidth, canvasHeight, fit);
       (bgObj as any)._bgFit = fit;
       bgObj.setCoords();
-      // Cover/Contain encajan contra la página; con la plantilla de noticias la foto vive en
-      // su banda, así que se vuelve a encajar ahí en vez de dejarla debajo de la franja.
+      // Con la plantilla puesta estos dos botones son además el reset del encuadre manual:
+      // **Cover** devuelve el encaje automático de la plantilla (cover de página anclado
+      // arriba), y por eso borra la marca antes de re-maquetar. **Contain** es lo contrario,
+      // un encuadre elegido a propósito, así que se marca para que `layout()` lo respete —
+      // dejarlo sin marcar lo revertiría a cover en el mismo `relayoutNewsTemplate`.
+      if (fit === "cover") clearPhotoFraming(canvas);
+      else markPhotoFramed(canvas);
       relayoutNewsTemplate(canvas, canvasWidth, canvasHeight);
       canvas.requestRenderAll();
       saveHistory(pageId);
@@ -581,6 +632,9 @@ export function useCanvasState() {
       const bgObj = findBackgroundImage(canvas);
       if (!bgObj) return;
       scaleAboutPageCenter(bgObj, scale, canvasWidth, canvasHeight);
+      // Igual que arrastrar: es un encuadre a mano, y el cristal tiene que seguir a la foto.
+      markPhotoFramed(canvas);
+      resyncGlassGeometry(canvas);
       canvas.requestRenderAll();
       saveHistory(pageId);
       refreshSelection();
@@ -812,6 +866,8 @@ export function useCanvasState() {
           // Estaba encajada a la banda superior, que ya no existe.
           fitBackgroundImage(bg, opts.pageWidth, opts.pageHeight, "cover");
           (bg as any)._bgFit = "cover";
+          // La marca de encuadre manual es de la plantilla; sin plantilla no significa nada.
+          clearPhotoFraming(canvas);
           bg.setCoords();
         }
         // Sin franja, `logo.ts` vuelve a colocarla arriba a la derecha y sin sombra.
@@ -877,6 +933,80 @@ export function useCanvasState() {
       });
     },
     [saveHistory]
+  );
+
+  // ── Capas ───────────────────────────────────────────────────────────
+  // El panel ([components/layers-panel.tsx]) trabaja siempre sobre el lienzo **activo**: es
+  // el que se está viendo, y una capa de otra página no significaría nada en pantalla. La
+  // lógica de Fabric vive en lib/layers.ts; aquí solo se resuelve el canvas, se escribe el
+  // historial y se avisa a Preact.
+
+  /** Las capas de la página activa, de arriba abajo. Sin el logo (ver lib/layers.ts). */
+  const getLayers = useCallback((): LayerInfo[] => {
+    const canvas = getActiveCanvas();
+    return canvas ? listLayers(canvas) : [];
+  }, [getActiveCanvas]);
+
+  /** Envuelve una operación sobre una capa: historial solo si de verdad cambió algo. */
+  const runLayerOp = useCallback(
+    (op: (canvas: fabric.Canvas) => boolean | void) => {
+      const canvas = getActiveCanvas();
+      const pageId = activeCanvasIdRef.current;
+      if (!canvas || !pageId) return;
+      if (op(canvas) === false) return;
+      saveHistory(pageId);
+      refreshLayers();
+      refreshSelection();
+    },
+    [getActiveCanvas, saveHistory, refreshLayers, refreshSelection]
+  );
+
+  const setLayerVisibility = useCallback(
+    (obj: fabric.FabricObject, visible: boolean) =>
+      runLayerOp((canvas) => setLayerVisible(canvas, obj, visible)),
+    [runLayerOp]
+  );
+
+  const setLayerLock = useCallback(
+    (obj: fabric.FabricObject, locked: boolean) =>
+      runLayerOp((canvas) => setLayerLocked(canvas, obj, locked)),
+    [runLayerOp]
+  );
+
+  const shiftLayer = useCallback(
+    (obj: fabric.FabricObject, delta: number) =>
+      runLayerOp((canvas) => moveLayer(canvas, obj, delta)),
+    [runLayerOp]
+  );
+
+  const dropLayer = useCallback(
+    (fromRow: number, toRow: number) =>
+      runLayerOp((canvas) => reorderByRow(canvas, fromRow, toRow)),
+    [runLayerOp]
+  );
+
+  /** Selecciona una capa desde el panel. Una bloqueada no se selecciona: sus tiradores se
+   *  dibujarían sobre algo que el ratón no puede mover. */
+  const selectLayer = useCallback(
+    (obj: fabric.FabricObject) => {
+      const canvas = getActiveCanvas();
+      if (!canvas || obj.selectable === false) return;
+      canvas.setActiveObject(obj);
+      canvas.requestRenderAll();
+      setSelectedObject(obj);
+      refreshSelection();
+    },
+    [getActiveCanvas, refreshSelection]
+  );
+
+  const removeLayer = useCallback(
+    (obj: fabric.FabricObject) =>
+      runLayerOp((canvas) => {
+        if (canvas.getActiveObject() === obj) canvas.discardActiveObject();
+        canvas.remove(obj);
+        canvas.requestRenderAll();
+      }),
+    [runLayerOp]
   );
 
   // ── Object manipulation ─────────────────────────────────────────────
@@ -1123,6 +1253,9 @@ export function useCanvasState() {
         // Fabric no serializa selectable/evented, así que el chrome de la plantilla de
         // noticias vuelve de aquí siendo clicable (ver normalizeNewsTemplate).
         normalizeNewsTemplate(canvas);
+        // Y los candados del panel de capas, por lo mismo: `_locked` viaja en el JSON, las
+        // propiedades que lo hacen efectivo no (ver lib/layers.ts).
+        applyLockState(canvas);
         // The background is rebuilt from its saved URL, i.e. at full resolution again.
         normalizeBackgroundSource(canvas);
         await applyLogoToCanvas(canvas, canvasWidth, canvasHeight);
@@ -1171,6 +1304,9 @@ export function useCanvasState() {
         if (bg) {
           fitBackgroundImage(bg, width, height, ((bg as any)._bgFit as "cover" | "contain") ?? "cover");
           bg.setCoords();
+          // Y con ello se descarta también el encuadre manual de la plantilla, por lo mismo
+          // que se dice justo arriba: describía una página que ya no existe.
+          clearPhotoFraming(canvas);
         }
         // Y la plantilla de eventos se re-apila contra el nuevo borde inferior.
         relayoutEventTemplate(canvas, width, height);
@@ -1302,6 +1438,7 @@ export function useCanvasState() {
         canvas.loadFromJSON(JSON.parse(template.canvas_json)).then(async () => {
           applyWorkspaceClip(canvas, template.width, template.height);
           normalizeNewsTemplate(canvas);
+          applyLockState(canvas);
           normalizeBackgroundSource(canvas);
           await applyLogoToCanvas(canvas, template.width, template.height);
           canvas.requestRenderAll();
@@ -1360,6 +1497,15 @@ export function useCanvasState() {
     // Consumers don't read this directly — it exists so a mutation of the (stable)
     // selected object still produces a state change and re-renders the panels.
     selectionVersion,
+    // Lo mismo para la lista de capas, que además cambia al añadir y quitar objetos.
+    layersVersion,
+    getLayers,
+    selectLayer,
+    setLayerVisibility,
+    setLayerLock,
+    shiftLayer,
+    dropLayer,
+    removeLayer,
     canvasWidth,
     canvasHeight,
     zoom,
