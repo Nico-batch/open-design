@@ -7,6 +7,8 @@ import {
   currentVariant,
   hasNewsTemplate,
   readNewsFigure,
+  readBandOpacity,
+  BAND_ALPHA_MIN,
   type NewsVariant,
 } from "../lib/news-template";
 import type { NewsFields, TwentyRecord } from "../types";
@@ -42,6 +44,7 @@ export function NewsPanel() {
     composeNewsOnCanvas,
     revertNewsTemplate,
     setNewsVariantOnCanvas,
+    setNewsBandOpacityOnCanvas,
     setNewsFigureOnCanvas,
     canvasWidth,
     canvasHeight,
@@ -52,6 +55,7 @@ export function NewsPanel() {
   const [copy, setCopy] = useState<NewsCopy | null>(null);
   const [applied, setApplied] = useState(false);
   const [variant, setVariant] = useState<NewsVariant>("navy");
+  const [bandAlpha, setBandAlpha] = useState(0.82);
   const [figure, setFigure] = useState({ valor: "", unidad: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +84,7 @@ export function NewsPanel() {
     if (!canvas) return;
     setApplied(hasNewsTemplate(canvas));
     setVariant(currentVariant(canvas));
+    setBandAlpha(readBandOpacity(canvas));
     setFigure(readNewsFigure(canvas));
   }, [primaryPage, getCanvasForPage]);
 
@@ -183,6 +188,32 @@ export function NewsPanel() {
     [variant, applied, run, setNewsVariantOnCanvas]
   );
 
+  /**
+   * La opacidad de la franja, en dos tiempos: arrastrar repinta el lienzo directamente (es
+   * barato, solo recolorea un rectángulo, y sin eso el control no enseñaría lo que hace),
+   * soltar pasa por `run()` para que quede **una** entrada de historial y se guarde.
+   */
+  const dragBandAlpha = useCallback(
+    (next: number) => {
+      setBandAlpha(next);
+      if (!applied || !primaryPage) return;
+      const canvas = getCanvasForPage(primaryPage.id);
+      if (canvas) setNewsBandOpacityOnCanvas(canvas, primaryPage.id, next);
+    },
+    [applied, primaryPage, getCanvasForPage, setNewsBandOpacityOnCanvas]
+  );
+
+  const commitBandAlpha = useCallback(
+    (next: number) => {
+      setBandAlpha(next);
+      if (!applied) return;
+      void run((canvas, pageId) => {
+        setNewsBandOpacityOnCanvas(canvas, pageId, next, { commit: true });
+      });
+    },
+    [applied, run, setNewsBandOpacityOnCanvas]
+  );
+
   const commitFigure = useCallback(
     (next: { valor: string; unidad: string }) => {
       setFigure(next);
@@ -213,9 +244,10 @@ export function NewsPanel() {
   return (
     <div>
       <p class="text-zinc-400 text-[10px] mb-3 leading-snug">
-        Plantilla opcional: la foto arriba y una franja de color abajo con la sección, el
-        titular y el pie, de modo que el titular nunca queda encima de la foto. Está pensada
-        para 1080×1350; en cuadrado la franja ocupa más sitio.
+        Plantilla opcional: la foto arriba y abajo una franja translúcida con la sección, el
+        titular y el pie. A través de la franja se ve la misma foto desenfocada, así que el
+        titular nunca compite con la imagen. En cuadrado la franja ocupa más sitio que en
+        1080×1350, que es el formato para el que está pensada.
       </p>
 
       {applied ? (
@@ -273,6 +305,26 @@ export function NewsPanel() {
           </button>
         ))}
       </div>
+
+      <label class="text-zinc-400 text-[11px] font-semibold mb-1 flex justify-between">
+        Opacidad de la franja
+        <span class="text-zinc-400 font-mono">{Math.round(bandAlpha * 100)}%</span>
+      </label>
+      <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">
+        Cuánto tapa la franja la foto desenfocada de detrás. Cuanto más baja, más se ve la
+        imagen y menos contraste tiene el titular.
+      </p>
+      <input
+        type="range"
+        min={BAND_ALPHA_MIN}
+        max="1"
+        step="0.02"
+        class="w-full accent-accent mb-3 disabled:opacity-40"
+        value={bandAlpha}
+        disabled={busy || !applied}
+        onInput={(e) => dragBandAlpha(parseFloat((e.target as HTMLInputElement).value))}
+        onChange={(e) => commitBandAlpha(parseFloat((e.target as HTMLInputElement).value))}
+      />
 
       <p class="text-zinc-400 text-[11px] font-semibold mb-1">Dato destacado</p>
       <p class="text-zinc-500 text-[10px] mb-1.5 leading-snug">

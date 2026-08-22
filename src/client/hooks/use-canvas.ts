@@ -44,6 +44,7 @@ import {
   relayoutNewsTemplate,
   clearNewsTemplate,
   applyNewsVariant,
+  setNewsBandOpacity,
   setNewsFigure,
   markRecordTitle,
   type NewsVariant,
@@ -823,6 +824,21 @@ export function useCanvasState() {
     [saveHistory]
   );
 
+  /**
+   * Ajusta cuánto tapa la franja de la foto desenfocada que tiene detrás.
+   *
+   * `commit` separa el arrastre del deslizador de su confirmación: mover el control repinta el
+   * lienzo en vivo (es barato, solo recolorea un rectángulo) pero cada píxel de arrastre no
+   * puede ser un paso de deshacer, así que la entrada de historial solo se escribe al soltar.
+   */
+  const setNewsBandOpacityOnCanvas = useCallback(
+    (canvas: fabric.Canvas, pageId: string, alpha: number, opts?: { commit?: boolean }): void => {
+      if (!setNewsBandOpacity(canvas, alpha)) return;
+      if (opts?.commit) saveHistory(pageId);
+    },
+    [saveHistory]
+  );
+
   /** Pone, cambia o quita la cifra destacada — el único bloque que no sale del CRM. */
   const setNewsFigureOnCanvas = useCallback(
     (
@@ -1348,6 +1364,7 @@ export function useCanvasState() {
     composeNewsOnCanvas,
     revertNewsTemplate,
     setNewsVariantOnCanvas,
+    setNewsBandOpacityOnCanvas,
     setNewsFigureOnCanvas,
     getCanvasForPage,
     getCanvasSize,

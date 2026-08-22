@@ -4,6 +4,7 @@ import { applyBackgroundEffects, applyScrim, NO_EFFECTS, type ScrimTone } from "
 import { findBackgroundImage, downscaleOversizedSource } from "./background";
 import { bringLogoToFront } from "./logo";
 import { syncCanvasFonts } from "./fonts";
+import { BRAND } from "./palette";
 
 /**
  * La estructura fija de un post de agenda, rellenada con los campos que tenga el evento.
@@ -129,9 +130,7 @@ export function clearEventTemplate(canvas: fabric.Canvas): void {
  */
 export type EventTheme = "light" | "dark";
 
-const NAVY = "#0a2540";
-const AMBER = "#f4a825";
-const CREAM = "#fbf7f0";
+const { navy: NAVY, amber: AMBER, cream: CREAM } = BRAND;
 
 interface Palette {
   /** Titular, fecha: la tinta principal. */

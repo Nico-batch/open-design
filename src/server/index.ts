@@ -176,7 +176,9 @@ app.openapi(createDesign, async (c) => {
   const canvasData = canvas_json || "{}";
   await run(
     "INSERT INTO designs (name, canvas_json, width, height) VALUES (?, ?, ?, ?)",
-    [name || "Untitled Design", canvasData, width || 1080, height || 1080]
+    // 4:5 por defecto, igual que un diseño que nace del CRM: es el formato que mas pantalla
+    // ocupa en el feed de Instagram, y es el que usan las dos plantillas.
+    [name || "Untitled Design", canvasData, width || 1080, height || 1350]
   );
   const row = await get<z.infer<typeof DesignSchema>>("SELECT * FROM designs ORDER BY created_at DESC LIMIT 1");
   // Auto-create first page
@@ -490,13 +492,14 @@ function parseObjectType(raw: string): TwentyObjectType | null {
 /**
  * Tamaño del lienzo con el que nace un diseño segun de que objeto venga.
  *
- * Un evento llega casi siempre con un cartel vertical por imagen (comprobado sobre la
- * instancia real: `cartel-...-598x1024.jpg`, `...-768x960.jpg`), asi que 4:5 lo aprovecha
- * mucho mejor que el cuadrado — y ademas ocupa mas pantalla en el feed. Solo afecta a
- * diseños nuevos; los ya creados conservan el tamaño con el que se guardaron.
+ * 4:5 en los dos casos. Un evento llega casi siempre con un cartel vertical por imagen
+ * (comprobado sobre la instancia real: `cartel-...-598x1024.jpg`, `...-768x960.jpg`), y una
+ * noticia usa la plantilla de franja, que esta maquetada para vertical; ademas 4:5 es el
+ * formato que mas pantalla ocupa en el feed. Solo afecta a diseños nuevos; los ya creados
+ * conservan el tamaño con el que se guardaron.
  */
 const DEFAULT_CANVAS_SIZE: Record<TwentyObjectType, { width: number; height: number }> = {
-  news: { width: 1080, height: 1080 },
+  news: { width: 1080, height: 1350 },
   event: { width: 1080, height: 1350 },
 };
 

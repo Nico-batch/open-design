@@ -100,6 +100,13 @@ export interface EditorContextValue {
   ) => Promise<void>;
   /** Recolorea la plantilla sin recomponerla, así que no pierde los retoques manuales. */
   setNewsVariantOnCanvas: (canvas: fabric.Canvas, pageId: string, variant: NewsVariant) => void;
+  /** Cuánto tapa la franja la foto desenfocada de detrás. `commit` escribe el historial. */
+  setNewsBandOpacityOnCanvas: (
+    canvas: fabric.Canvas,
+    pageId: string,
+    alpha: number,
+    opts?: { commit?: boolean }
+  ) => void;
   /** La cifra destacada, que no sale del CRM: la escribe el operador. */
   setNewsFigureOnCanvas: (
     canvas: fabric.Canvas,

@@ -154,7 +154,9 @@ src/
     │   ├── event-fields.ts     — campos de un evento → texto publicable, fechas (§9.26)
     │   ├── event-template.ts   — plantilla de eventos: bloques, modos, temas (§9.26/§9.27)
     │   ├── news-fields.ts      — secciones de una noticia y la cuenta del pie (§9.28)
-    │   └── news-template.ts    — plantilla opcional de noticias: franja, chip, pie (§9.28)
+    │   ├── news-template.ts    — plantilla opcional de noticias: franja translúcida sobre la
+    │   │                         foto desenfocada, chip, pie (§9.28/§9.29)
+    │   └── palette.ts          — colores de marca + muestras de los selectores (§9.29)
     │   (workspace.ts aloja además el contenedor del textarea oculto de Fabric, §9.22)
     ├── hooks/
     │   ├── use-canvas.ts       — toda la lógica de Fabric.js: texto, formas, imágenes,
@@ -166,7 +168,8 @@ src/
         ├── editor.tsx, canvas-area.tsx, page-canvas.tsx, pages-bar.tsx
         ├── guides-overlay.tsx      — guías de centro imantadas, capa DOM fuera de Fabric (§9.23)
         ├── event-panel.tsx         — sección "Evento" del sidebar izquierdo (§9.26)
-        ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28)
+        ├── news-panel.tsx          — sección "Noticia" del sidebar izquierdo (§9.28/§9.29)
+        ├── color-field.tsx         — selector de color con muestras de marca (§9.29)
         ├── left-sidebar.tsx, right-sidebar.tsx, toolbar.tsx
         ├── home.tsx, design-list.tsx, template-card.tsx
 
@@ -1755,6 +1758,10 @@ un campo menos que mantener en el tipo.
 
 ### 9.28 Plantilla de noticias (opcional)
 
+> **Al día en §9.29**, que rediseñó tres cosas de esta sección: la franja pasó de sólida a
+> translúcida con la foto desenfocada detrás, el chip bajó de 38 a 30 px y el formato por
+> defecto de una noticia pasó a 1080×1350. Lo demás sigue tal cual se describe aquí.
+
 Las noticias tenían el trato de siempre: foto a sangre y el titular como un cuadro de texto
 suelto encima, que había que colocar, dimensionar y hacer legible a mano en cada post (velo,
 sombra, «Mejorar titular»). Ahora hay una plantilla que hace ese trabajo de una vez, con un
@@ -1899,10 +1906,9 @@ contradecirse. Confirman al perder el foco o con **Enter**.
   entera**: el refresco desde Twenty de cada apertura, `setCanvasSize`, `setBackgroundImageFit`
   (Cover/Contain) y `setBackground` (subir otra foto). Si falta cualquiera, la foto se mete
   por debajo de la franja — el mismo patrón de §9.18, otra vez.
-- **`DEFAULT_CANVAS_SIZE.news` se queda en 1080×1080.** La plantilla está pensada para
-  1080×1350 y el panel lo dice, pero como no se aplica sola, cambiar el tamaño por defecto
-  alteraría el diseño de todas las noticias para servir a una opción que quizá no se use. El
-  formato se cambia desde el toolbar y la plantilla se re-maqueta sola.
+- **`DEFAULT_CANVAS_SIZE.news` se quedó en 1080×1080** mientras la plantilla fue solo una
+  opción entre otras. **Revertido en §9.29**: hoy una noticia nace en 1080×1350, igual que un
+  evento. El formato se sigue cambiando desde el toolbar y la plantilla se re-maqueta sola.
 - **`revertNewsTemplate`** es el botón de vuelta: borra lo marcado, devuelve la foto a cover
   de página completa, la marca a su esquina y el titular a un cuadro de texto — exactamente
   el estado con el que nace una noticia. Una entrada de historial, así que `Ctrl+Z` devuelve
@@ -2230,3 +2236,126 @@ puede adivinar desde aquí.
   no montarlo por error.
 - **`docker-compose.yml`**: no se añadió — `PLAN.md` §4/§9 pide desplegar como
   **Application** (build por Dockerfile) en Dokploy, no como stack de Compose.
+
+### 9.29 Franja translúcida, portrait por defecto y muestras de color
+
+Tres peticiones sobre lo que dejó §9.28.
+
+#### El formato por defecto pasa a 1080×1350
+
+`DEFAULT_CANVAS_SIZE.news` y el `POST /api/designs` del diseño en blanco (y el `DEFAULT` de
+[`schema.sql`](src/server/schema.sql), que solo importa en una base nueva). §9.28 había dejado
+el cuadrado a propósito, argumentando que la plantilla no se aplica sola; el usuario prefiere
+lo contrario, y el 4:5 es el formato que más pantalla ocupa en el feed. **Solo afecta a
+diseños nuevos**: los borradores ya guardados conservan su tamaño (verificado).
+
+#### La franja deja de ser opaca: cristal esmerilado
+
+El bloque de color donde vive el titular ahora deja ver la foto por detrás, desenfocada. Esto
+tumba la premisa con la que se escribió §9.28 —«el texto vive en su propia franja opaca, así
+que la fotografía se queda intacta»— pero **no** la regla que la sostenía: la fotografía sigue
+sin filtros ni velos. Lo que se desenfoca es **una copia suya**, no ella.
+
+**La capa `glass`** (`_nwRole: "glass"`, en
+[`lib/news-template.ts`](src/client/lib/news-template.ts)) es una segunda imagen con el mismo
+bitmap, un filtro `Blur(0.3)` —el mismo valor con el que la plantilla de eventos difumina el
+fondo de su modo cartel— y un `clipPath` del tamaño exacto de la franja.
+
+- **Se construye síncrona, desde `_originalElement`, no con `clone()`.** El cartel de los
+  eventos usa `clone()`, que es asíncrono, y por eso `refreshPosterImage` tiene que llamarse a
+  mano desde `page-canvas.tsx`. Aquí no: al ser síncrona cabe **dentro de `layout()`**, y
+  `layout()` es el punto por el que ya pasan las cinco rutas que mueven la franja o cambian la
+  foto (composición, `relayoutNewsTemplate` desde el refresco de Twenty, `setCanvasSize`,
+  Cover/Contain y subir otra foto). Cero sitios nuevos que acordarse de tocar — que es
+  exactamente el error que §9.18 costó encontrar cuatro veces.
+- **`_srcUrl` es obligatorio.** Construir una `FabricImage` desde un elemento hace que
+  `getSrc()` incruste el bitmap entero en base64 al serializar; el override de
+  [`background.ts`](src/client/lib/background.ts) devuelve la URL solo si esa propiedad está
+  puesta. Verificado: el `canvas_json` con plantilla son 7.791 bytes y no contiene `data:image`.
+- **`_nwRole` hay que registrarlo también en `fabric.FabricImage`**, y el orden importa:
+  `background.ts` *sobrescribe* `FabricImage.customProperties` con un array literal, así que el
+  bucle de `news-template.ts` tiene que evaluarse después — lo garantiza el `import` de
+  `background.ts` que ya había arriba (un módulo importado se evalúa antes que quien lo importa).
+- **Geometría: misma escala y mismo `left` que la foto, anclada al borde inferior.** Así la
+  franja enseña la continuación de la misma fotografía, al mismo zoom y encuadre, en vez de un
+  recorte a otra escala que se leería como una segunda imagen. `fitPhotoToBand` deja siempre la
+  foto con al menos el alto de la banda superior, que es mayor que el de la franja, así que
+  cubre; hay un `max` para el caso degenerado.
+- **Solo se re-filtra cuando cambia la foto.** Desenfocar un bitmap de 4096 px es lo caro de
+  todo esto y mover la franja no lo necesita: si el `_srcUrl` coincide, se recolocan escala,
+  posición y recorte y nada más.
+- **Sin foto no hay cristal**: se elimina, en vez de dejar congelada la última imagen que hubo.
+
+Además, el *fallback legacy* de `findBackgroundImage` (el que cubre los diseños guardados antes
+de que el marcador se serializara) ahora **ignora las imágenes de plantilla** (`_nwRole` o
+`_tplRole`). Sin eso podría devolver el cristal —o el cartel de un evento— y el refresco desde
+Twenty sustituiría esa imagen en lugar de la fotografía.
+
+**La opacidad es un deslizador del panel «Noticia»**, no una constante: 82 % por defecto en
+navy y 86 % en crema. La variante clara necesita más cuerpo porque debajo hay una fotografía
+que normalmente es más oscura que el crema. Como el modo y la variante, **se deduce del
+lienzo** (del alfa del relleno de la franja, con el mismo `match` de `rgba(...)` que usa
+`readScrim`) en vez de guardarse aparte. `applyNewsVariant` la conserva al cambiar de variante
+—mismo criterio que `setScrim` con el tono del velo (§9.27)— salvo que siguiera en el valor por
+defecto de la que deja, en cuyo caso adopta el de la nueva. Arrastrar el control repinta en
+vivo; el historial y el guardado solo se escriben al soltar (`commit`).
+
+**El chip baja de 38 a 30 px** (y sus márgenes con él): a 38 competía con el titular.
+
+#### Muestras de color en los ocho selectores
+
+[`lib/palette.ts`](src/client/lib/palette.ts) (nuevo) concentra los colores de marca —que
+estaban duplicados como constantes locales en las dos plantillas— y añade la lista de muestras.
+[`components/color-field.tsx`](src/client/components/color-field.tsx) (nuevo) sustituye el
+bloque `input[type=color]` + campo hexadecimal repetido ocho veces y le cuelga la fila de
+muestras: azul noche, ámbar, crema, blanco, negro y tres colores de marcado con la saturación
+apagada del navy —rojo `#b3261e` (el que §9.28 dejó sin usar al no existir la sección
+«Sucesos»), verde `#1e7d4f` y azul `#2f6d9e`.
+
+Las muestras hacen **`preventDefault` en `onMouseDown` siempre**, lo pase o no el llamante: sin
+eso, pulsar una saca al `Textbox` de edición y el color se aplicaría al cuadro entero en vez de
+a la palabra seleccionada (§9.21). La primera fila de `BG_COLORS` del panel Bg son ahora los
+colores de marca.
+
+#### Verificado contra el build de producción
+
+`pnpm run build` + `pnpm run start` en `:8788` con la CSP real (regla de §9.11/§10.3), con
+Playwright, leyendo el `canvas_json` persistido por la API y midiendo píxeles del lienzo. Sobre
+una copia aparte de la base de datos, no la del repo; **ninguna prueba escribió en Twenty**.
+
+- **Portrait**: una noticia nueva nace en 1080×1350.
+- **Cristal**: un solo objeto `glass` con `filters:[{Blur,0.3}]`, `clipPath` exactamente igual a
+  la franja (`top=816 h=534`), misma escala que la foto (1.2089) y sin `data:image` en el JSON.
+  La franja se pinta con `rgba(10,37,64,0.82)`.
+- **La foto de arriba NO se contamina** (era el riesgo de compartir `_originalElement`): energía
+  de bordes 13,23 en la zona alta de la foto frente a 0,55 en la franja limpia; y la franja mide
+  55,2 de luminancia frente a los 33,2 del navy puro, o sea que la foto **sí** se ve a través.
+- **Los tres formatos** (1350 → 1920 → 1080 → 1350): un solo cristal, siempre recortado a la
+  franja vigente, foto reencajada, margen inferior de 48,0 px exacto, cero solapes medidos par a
+  par, y volver al formato de partida reproduce la maqueta original.
+- **Opacidad y variante**: el panel lee el 82 % del lienzo; bajar al 60 % deja
+  `rgba(10,37,64,0.6)`; pasar a Crema lo conserva (`rgba(251,247,240,0.6)`); desde el valor por
+  defecto, cambiar de variante sí adopta el nuevo (0.82 ↔ 0.86).
+- **Ciclo completo**: aplicar → rehacer → volver al diseño normal, sin duplicados y sin tocar un
+  texto añadido a mano. Un solo `Ctrl+Z` (o el botón) quita la plantilla entera, cristal
+  incluido, y rehacer la devuelve.
+- **Persistencia**: dos aperturas seguidas dan un `canvas_json` **idéntico** (una franja, un
+  cristal, un titular, una foto). Exportación 2160×2700.
+- **Muestra sobre una palabra**: con «tormentas» seleccionada dentro del titular, la muestra
+  ámbar deja `styles:[{start:4,end:13,{fill:"#f4a825"}}]` y el `fill` del cuadro intacto.
+- **Casos límite**: sin foto ni sección, no se crea cristal ni chip, el lienzo queda en azul de
+  marca y la franja en el 62,0 %.
+- **Sin regresión**: un evento abierto en paralelo conserva sus `_tplRole`, su velo y su tema, y
+  no aparece ni un `_nwRole` en su lienzo.
+- Cero errores de consola en todos los pasos.
+
+#### Límites conocidos
+
+- **El cristal duplica el bitmap de la foto en memoria** mientras la plantilla está puesta (el
+  original y su copia desenfocada). Ambos van reducidos a 4096 px como mucho (§9.18), así que en
+  la práctica es asumible, pero es el coste de este diseño frente a la franja opaca.
+- **Con la opacidad muy baja** (el suelo del deslizador es el 50 %) el titular puede perder
+  contraste sobre una foto clara. Es decisión del operador; el suelo existe para que no se pueda
+  dejar ilegible del todo.
+- Sigue vigente lo que §9.28 anotaba de **«Mejorar foto»**: añadiría velo y filtros a la
+  fotografía, que es justo lo que este diseño evita al desenfocar solo la copia.

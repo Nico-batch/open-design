@@ -27,6 +27,7 @@ import {
   type TextGlowKind,
 } from "../lib/text-effects";
 import { EmojiPicker } from "./emoji-picker";
+import { ColorField } from "./color-field";
 
 /**
  * Keeps a control from stealing focus out of the text box being edited. Losing focus
@@ -207,10 +208,9 @@ export function RightSidebar() {
             <span class="text-[11px] text-zinc-300 font-mono">{canvasWidth} x {canvasHeight}</span>
           </div>
           <label class="text-[11px] text-zinc-400">Background color</label>
-          <input
-            type="color"
-            class="w-full h-8 rounded-md border border-zinc-700 cursor-pointer bg-transparent"
-            onChange={(e) => setBackground("color", (e.target as HTMLInputElement).value)}
+          <ColorField
+            value={(canvas?.backgroundColor as string) || "#ffffff"}
+            onChange={(hex) => setBackground("color", hex)}
           />
         </div>
       </aside>
@@ -391,23 +391,14 @@ export function RightSidebar() {
                 it reads and writes the selected characters when there are any. */}
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Color</label>
-              <div class="flex items-center gap-2">
-                <input
-                  type="color"
-                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                  value={styleValue("fill", "#ffffff")}
-                  onMouseDown={keepFocus}
-                  onInput={(e) => applyTextStyle({ fill: (e.target as HTMLInputElement).value })}
-                />
-                <input
-                  type="text"
-                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
-                  value={styleOf("fill").mixed ? "" : styleValue("fill", "#ffffff")}
-                  placeholder={styleOf("fill").mixed ? "varios" : undefined}
-                  onKeyDown={onEnter(restoreTextFocus)}
-                  onInput={(e) => applyTextStyle({ fill: (e.target as HTMLInputElement).value })}
-                />
-              </div>
+              <ColorField
+                value={styleValue("fill", "#ffffff")}
+                text={styleOf("fill").mixed ? "" : styleValue("fill", "#ffffff")}
+                placeholder={styleOf("fill").mixed ? "varios" : undefined}
+                onMouseDown={keepFocus}
+                onKeyDown={onEnter(restoreTextFocus)}
+                onChange={(hex) => applyTextStyle({ fill: hex })}
+              />
             </div>
 
             {/* Outline — the other half of the legibility toolkit (lib/effects.ts covers
@@ -420,20 +411,12 @@ export function RightSidebar() {
                   {outlineWidth > 0 ? `${outlineWidth}px` : "off"}
                 </span>
               </label>
-              <div class="flex items-center gap-2 mb-2">
-                <input
-                  type="color"
-                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
+              <div class="mb-2">
+                <ColorField
                   value={outlineColor}
                   onMouseDown={keepFocus}
-                  onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
-                />
-                <input
-                  type="text"
-                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
-                  value={outlineColor}
                   onKeyDown={onEnter(restoreTextFocus)}
-                  onInput={(e) => applyOutline({ color: (e.target as HTMLInputElement).value })}
+                  onChange={(hex) => applyOutline({ color: hex })}
                 />
               </div>
               <input
@@ -479,22 +462,12 @@ export function RightSidebar() {
                   two is active — and neither can be narrowed down to a selected word. */}
               {shadow.kind !== "none" && (
                 <div class="flex flex-col gap-2 pl-2 border-l border-zinc-700">
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="color"
-                      class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                      value={shadow.color}
-                      onMouseDown={keepFocus}
-                      onInput={(e) => applyShadow({ color: (e.target as HTMLInputElement).value })}
-                    />
-                    <input
-                      type="text"
-                      class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
-                      value={shadow.color}
-                      onKeyDown={onEnter(restoreTextFocus)}
-                      onInput={(e) => applyShadow({ color: (e.target as HTMLInputElement).value })}
-                    />
-                  </div>
+                  <ColorField
+                    value={shadow.color}
+                    onMouseDown={keepFocus}
+                    onKeyDown={onEnter(restoreTextFocus)}
+                    onChange={(hex) => applyShadow({ color: hex })}
+                  />
                   <div>
                     <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
                       Intensidad
@@ -560,26 +533,21 @@ export function RightSidebar() {
                 Fondo del texto
                 <span class="text-zinc-400 font-mono">{textBg ? "on" : "off"}</span>
               </label>
-              <div class="flex items-center gap-2">
-                <input
-                  type="color"
-                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                  value={textBg || "#000000"}
-                  onMouseDown={keepFocus}
-                  onInput={(e) =>
-                    applyTextStyle({ textBackgroundColor: (e.target as HTMLInputElement).value })
-                  }
-                />
-                <button
-                  class="flex-1 py-1.5 rounded-md border border-zinc-700 bg-transparent text-[11px] text-zinc-400 cursor-pointer transition-all hover:text-zinc-50 hover:border-zinc-500 disabled:opacity-40"
-                  title="Quita la banda de color de detrás del texto"
-                  disabled={!textBg}
-                  onMouseDown={keepFocus}
-                  onClick={() => applyTextStyle({ textBackgroundColor: "" })}
-                >
-                  Quitar fondo
-                </button>
-              </div>
+              <ColorField
+                value={textBg || "#000000"}
+                onMouseDown={keepFocus}
+                onKeyDown={onEnter(restoreTextFocus)}
+                onChange={(hex) => applyTextStyle({ textBackgroundColor: hex })}
+              />
+              <button
+                class="w-full mt-1.5 py-1.5 rounded-md border border-zinc-700 bg-transparent text-[11px] text-zinc-400 cursor-pointer transition-all hover:text-zinc-50 hover:border-zinc-500 disabled:opacity-40"
+                title="Quita la banda de color de detrás del texto"
+                disabled={!textBg}
+                onMouseDown={keepFocus}
+                onClick={() => applyTextStyle({ textBackgroundColor: "" })}
+              >
+                Quitar fondo
+              </button>
             </div>
 
             {/* Clearing per-character overrides. Setting a colour with nothing highlighted
@@ -651,41 +619,19 @@ export function RightSidebar() {
             {/* Fill color */}
             <div>
               <label class="text-[11px] text-zinc-400 mb-1 block">Fill color</label>
-              <div class="flex items-center gap-2">
-                <input
-                  type="color"
-                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                  value={(selectedObject.fill as string) || "#6366f1"}
-                  onInput={(e) =>
-                    updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
-                  }
-                />
-                <input
-                  type="text"
-                  class="flex-1 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent font-mono"
-                  value={(selectedObject.fill as string) || "#6366f1"}
-                  onInput={(e) =>
-                    updateSelectedObject({ fill: (e.target as HTMLInputElement).value })
-                  }
-                />
-              </div>
+              <ColorField
+                value={(selectedObject.fill as string) || "#6366f1"}
+                onChange={(hex) => updateSelectedObject({ fill: hex })}
+              />
             </div>
 
             {/* Stroke */}
             <div>
-              <label class="text-[11px] text-zinc-400 mb-1 block">Stroke color</label>
-              <div class="flex items-center gap-2">
-                <input
-                  type="color"
-                  class="w-8 h-8 rounded border border-zinc-700 cursor-pointer bg-transparent shrink-0"
-                  value={(selectedObject.stroke as string) || "#000000"}
-                  onInput={(e) =>
-                    updateSelectedObject({ stroke: (e.target as HTMLInputElement).value })
-                  }
-                />
+              <label class="text-[11px] text-zinc-400 mb-1 flex justify-between">
+                Stroke color
                 <input
                   type="number"
-                  class="w-16 bg-zinc-800 border border-zinc-700 rounded-md text-xs text-zinc-200 px-2 py-1.5 outline-none focus:border-accent"
+                  class="w-16 bg-zinc-800 border border-zinc-700 rounded-md text-[11px] text-zinc-200 px-2 py-0.5 outline-none focus:border-accent"
                   value={selectedObject.strokeWidth || 0}
                   min={0}
                   placeholder="Width"
@@ -695,7 +641,11 @@ export function RightSidebar() {
                     })
                   }
                 />
-              </div>
+              </label>
+              <ColorField
+                value={(selectedObject.stroke as string) || "#000000"}
+                onChange={(hex) => updateSelectedObject({ stroke: hex })}
+              />
             </div>
 
             {/* Border radius (for rect) */}

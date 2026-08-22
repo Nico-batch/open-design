@@ -20,6 +20,8 @@ import { DesignList } from "./design-list";
 import { EventPanel } from "./event-panel";
 import { NewsPanel } from "./news-panel";
 import { coerceTwentyObjectType } from "../lib/twenty";
+import { BRAND } from "../lib/palette";
+import { ColorField } from "./color-field";
 
 type Section = "templates" | "text" | "shapes" | "images" | "background" | "designs" | "event" | "news";
 
@@ -65,7 +67,10 @@ const GRADIENT_PRESETS = [
   "linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)",
 ];
 
+// La primera fila es la paleta de marca: un fondo de la casa tiene que estar a un clic, no
+// detrás del selector de color personalizado.
 const BG_COLORS = [
+  BRAND.navy, BRAND.amber, BRAND.cream, "#b3261e",
   "#1a1a2e", "#0f172a", "#18181b", "#1e1b4b",
   "#ffffff", "#f8fafc", "#fafaf9", "#fef3c7",
   "#2563eb", "#7c3aed", "#dc2626", "#059669",
@@ -291,13 +296,7 @@ export function LeftSidebar() {
                     </div>
 
                     <p class="text-zinc-400 text-[11px] mb-2">Custom color</p>
-                    <input
-                      type="color"
-                      class="w-full h-8 rounded-md border border-zinc-700 cursor-pointer bg-transparent"
-                      onChange={(e) =>
-                        setBackground("color", (e.target as HTMLInputElement).value)
-                      }
-                    />
+                    <ColorField value="#ffffff" onChange={(hex) => setBackground("color", hex)} />
 
                     <p class="text-zinc-400 text-[11px] mb-2 mt-4">Gradient presets</p>
                     <div class="grid grid-cols-3 gap-1.5 mb-4">

@@ -2,19 +2,26 @@ import * as fabric from "fabric";
 import type { NewsCopy } from "./news-fields";
 import { ACCOUNT_HANDLE } from "./news-fields";
 import { applyBackgroundEffects, applyScrim, NO_EFFECTS } from "./effects";
-import { findBackgroundImage } from "./background";
+import { findBackgroundImage, downscaleOversizedSource } from "./background";
 import { bringLogoToFront } from "./logo";
 import { syncCanvasFonts } from "./fonts";
+import { BRAND } from "./palette";
 
 /**
- * La plantilla fija de un post de noticia: foto arriba, franja de color sólido abajo con el
- * chip de sección, el titular y el pie.
+ * La plantilla fija de un post de noticia: foto arriba, franja translúcida abajo con el chip
+ * de sección, el titular y el pie.
  *
  * La diferencia de fondo con la plantilla de eventos (`event-template.ts`) no es estética:
- * ahí el texto va **encima** de la foto y todo el trabajo consiste en hacerlo legible (velo,
- * sombra, desenfoque); aquí el texto vive en su propia franja opaca, así que la fotografía se
- * queda intacta —sin filtros ni velos, como exige la guía— y el titular no puede competir con
- * ella por construcción. Por eso las dos plantillas no comparten paleta ni bloques.
+ * ahí el texto va **encima** de la foto, con toda la fotografía compitiendo con él, y el
+ * trabajo consiste en apagarla entera (velo, desenfoque, sombra en la letra); aquí el texto
+ * vive en su propia franja, así que la fotografía se queda **intacta en la mitad que se ve**
+ * —sin filtros ni velos, como exige la guía— y el titular no puede competir con ella por
+ * construcción. Por eso las dos plantillas no comparten paleta ni bloques.
+ *
+ * La franja no es opaca: deja ver la foto por detrás, desenfocada, como un cristal
+ * esmerilado. Y ese desenfoque **no se aplica a la fotografía**, que sigue limpia: es una
+ * copia suya, recortada a la franja (ver `syncGlass`). El color de la franja va encima con
+ * la opacidad que mande `readBandOpacity`, que es lo que garantiza el contraste del titular.
  *
  * `news-fields.ts` decide *qué se dice*; este fichero solo decide *dónde se pone*.
  */
@@ -30,7 +37,13 @@ import { syncCanvasFonts } from "./fonts";
 // `relayoutEventTemplate` corre sobre *todos* los lienzos desde `setCanvasSize` y le basta
 // encontrar un objeto con `_tplRole: "title"` para re-apilar la página como si fuera un
 // evento. Con propiedades distintas las dos plantillas no pueden interferir.
-for (const klass of [fabric.Textbox, fabric.Rect] as unknown as Array<{
+//
+// `FabricImage` está en la lista por la capa de cristal (`syncGlass`), y su registro depende
+// del orden de evaluación de los módulos: `background.ts` **sobrescribe**
+// `FabricImage.customProperties` con un array literal, así que este bucle tiene que correr
+// después. Lo garantiza el `import` de `background.ts` de arriba — un módulo importado se
+// evalúa antes que quien lo importa.
+for (const klass of [fabric.Textbox, fabric.Rect, fabric.FabricImage] as unknown as Array<{
   customProperties?: string[];
 }>) {
   klass.customProperties = [...(klass.customProperties ?? []), "_nwRole", "_nwVariant"];
@@ -59,6 +72,7 @@ export function markRecordTitle(obj: fabric.FabricObject): void {
 }
 
 export type NwRole =
+  | "glass"
   | "band"
   | "chipBg"
   | "chip"
@@ -73,12 +87,10 @@ export type NewsVariant = "navy" | "cream";
 
 // ── Paleta ──────────────────────────────────────────────────────────
 
-const NAVY = "#0a2540";
-const AMBER = "#f4a825";
-const CREAM = "#fbf7f0";
+const { navy: NAVY, amber: AMBER, cream: CREAM } = BRAND;
 
 interface Palette {
-  /** Fondo sólido de la franja. Nunca translúcido. */
+  /** Color de la franja. Se pinta con alfa (ver `DEFAULT_BAND_ALPHA`), nunca opaco. */
   band: string;
   /** Titular y pie. */
   ink: string;
@@ -104,6 +116,27 @@ const UNIT_ALPHA = 0.72;
 const RULE_ALPHA = 0.22;
 const ACCOUNT_ALPHA = 0.68;
 
+/**
+ * Cuánto cubre la franja de la foto desenfocada que tiene detrás.
+ *
+ * La variante clara necesita más cuerpo que la oscura, y no por gusto: debajo hay una
+ * fotografía que normalmente es más oscura que el crema, así que con el mismo alfa la franja
+ * clara se ensucia y el titular azul noche pierde contraste antes. El operador puede bajar
+ * las dos desde el panel — `BAND_ALPHA_MIN` es el suelo, elegido para que el titular siga
+ * legible sobre cualquier foto.
+ */
+const DEFAULT_BAND_ALPHA: Record<NewsVariant, number> = { navy: 0.82, cream: 0.86 };
+export const BAND_ALPHA_MIN = 0.5;
+
+/**
+ * Cuánto se desenfoca la copia de la foto que se ve a través de la franja.
+ *
+ * Es el mismo valor con el que la plantilla de eventos difumina el fondo de su modo cartel:
+ * suficiente para que ninguna forma reconocible compita con el titular, y no tanto como para
+ * que el color deje de ser el de la foto.
+ */
+const GLASS_BLUR = 0.3;
+
 function withAlpha(hex: string, alpha: number): string {
   const color = new fabric.Color(hex);
   const [r, g, b] = color.getSource();
@@ -126,10 +159,11 @@ const D = {
   padSide: 64,
   padTop: 64,
   padBottom: 48,
-  chipSize: 38,
-  chipPadX: 30,
-  chipPadY: 12,
-  chipRadius: 8,
+  // El chip es una etiqueta, no una línea de texto: a 38 px competía con el titular.
+  chipSize: 30,
+  chipPadX: 24,
+  chipPadY: 10,
+  chipRadius: 7,
   chipTracking: 2,
   gapAfterChip: 36,
   figureSize: 132,
@@ -199,6 +233,37 @@ export function currentVariant(canvas: fabric.Canvas): NewsVariant {
   return ((marked as any)?._nwVariant as NewsVariant) ?? "navy";
 }
 
+/**
+ * La opacidad de la franja, leída del alfa de su propio relleno — igual que la variante y el
+ * modo de los eventos, se deduce del lienzo en vez de guardarse en un segundo sitio que pueda
+ * contradecirlo. Mismo `match` sobre `rgba(...)` que usa `readScrim` en `effects.ts`.
+ */
+export function readBandOpacity(canvas: fabric.Canvas, variant?: NewsVariant): number {
+  const fallback = DEFAULT_BAND_ALPHA[variant ?? currentVariant(canvas)];
+  const band = findByRole(canvas, "band") as fabric.Rect | undefined;
+  const fill = band?.fill;
+  if (typeof fill !== "string") return fallback;
+  const m = fill.match(/rgba?\([^)]*,\s*([\d.]+)\s*\)/);
+  return m ? parseFloat(m[1]) : fallback;
+}
+
+/**
+ * Cambia la opacidad de la franja. No re-maqueta: la geometría no depende del color.
+ *
+ * Devuelve `false` si esta página no tiene plantilla.
+ */
+export function setNewsBandOpacity(canvas: fabric.Canvas, alpha: number): boolean {
+  const band = findByRole(canvas, "band") as fabric.Rect | undefined;
+  if (!band) return false;
+  const variant = ((band as any)._nwVariant as NewsVariant) ?? "navy";
+  band.set({ fill: withAlpha(PALETTES[variant].band, alpha) });
+  // `set` sobre un relleno no marca el objeto como sucio, así que Fabric volvería a estampar
+  // el bitmap cacheado con el color viejo (§9.21).
+  band.dirty = true;
+  canvas.requestRenderAll();
+  return true;
+}
+
 /** La cifra destacada tal como está en el lienzo, para que el panel no tenga que guardarla
  *  en un segundo sitio que pueda contradecir al diseño. */
 export function readNewsFigure(canvas: fabric.Canvas): { valor: string; unidad: string } {
@@ -257,7 +322,7 @@ function makeText(
     charSpacing: opts.charSpacing ?? 0,
     lineHeight: opts.lineHeight ?? 1,
     // Ni sombra, ni contorno, ni degradado: la guía los prohíbe expresamente en el texto, y
-    // aquí no hacen falta porque el fondo de la franja es sólido.
+    // aquí no hacen falta porque el contraste lo da la franja, no la letra.
     shadow: null,
     editable: true,
   });
@@ -277,13 +342,18 @@ function makeRect(role: NwRole, variant: NewsVariant, fill: string, extra?: Part
   return mark(rect, role, variant);
 }
 
-function buildBlocks(copy: NewsCopy, pageWidth: number, variant: NewsVariant): Built {
+function buildBlocks(
+  copy: NewsCopy,
+  pageWidth: number,
+  variant: NewsVariant,
+  bandAlpha: number
+): Built {
   const s = pageWidth / REF_WIDTH;
   const p = PALETTES[variant];
   const usable = pageWidth - 2 * D.padSide * s;
 
   const built: Built = {
-    band: makeRect("band", variant, p.band),
+    band: makeRect("band", variant, withAlpha(p.band, bandAlpha)),
     headline: makeText(copy.titular, "headline", variant, {
       fontSize: D.headlineMax * s,
       fontWeight: MEDIUM,
@@ -472,17 +542,22 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
 
   // La foto primero, que además la manda al fondo: así el índice base de abajo es fiable.
   fitPhotoToBand(canvas, pageWidth, bandTop);
+  // Y su copia desenfocada, recortada a la franja recién colocada. Va aquí, dentro de
+  // `layout`, para que las cinco rutas que mueven la franja o cambian la foto la actualicen
+  // sin tener que acordarse de ella (ver el comentario de `syncGlass`).
+  syncGlass(canvas, pageWidth, pageHeight, bandTop, ((built.band as any)._nwVariant as NewsVariant) ?? "navy");
 
-  // Orden interno de la plantilla: la franja tapa el excedente de la foto y el resto va
-  // encima de la franja, en el orden del diseño.
+  // Orden interno de la plantilla: el cristal va sobre la foto, la franja sobre el cristal y
+  // el resto encima, en el orden del diseño.
   //
   // Se mueven a un tramo contiguo **justo encima de la foto** en vez de subirlos al frente.
   // Subirlos dejaría cualquier objeto que el operador haya añadido a mano por *debajo* de la
-  // franja, que es opaca — su trabajo desaparecería al cambiar de formato. Así lo añadido a
-  // mano se queda arriba, que es lo que cualquiera espera.
+  // franja — su trabajo desaparecería al cambiar de formato. Así lo añadido a mano se queda
+  // arriba, que es lo que cualquiera espera.
   const photo = findBackgroundImage(canvas);
+  const glass = findByRole(canvas, "glass");
   let index = photo ? 1 : 0;
-  for (const obj of [built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
+  for (const obj of [glass, built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
     if (!obj) continue;
     canvas.moveObjectTo(obj, index);
     index++;
@@ -516,12 +591,106 @@ export function fitPhotoToBand(canvas: fabric.Canvas, pageWidth: number, bandTop
   canvas.sendObjectToBack(img);
 }
 
+// ── Cristal: la foto desenfocada que se ve a través de la franja ────
+
+/** El `src` con el que se construyó una imagen, sea cual sea el camino por el que llegó. */
+function sourceUrl(img: fabric.FabricImage): string {
+  return ((img as any)._srcUrl as string) || img.getSrc() || "";
+}
+
+/**
+ * Crea, actualiza o quita la copia desenfocada de la foto que se ve por debajo de la franja.
+ *
+ * Se construye **de forma síncrona** desde el mismo elemento de la foto, en vez de con
+ * `clone()` (que es lo que hace el cartel de los eventos): así cabe dentro de `layout()`, que
+ * es síncrona y es el único punto por el que pasan las cinco rutas que pueden mover la franja
+ * o cambiar la foto. Un `clone()` obligaría a repetir el refresco en cada una de ellas, que es
+ * exactamente el error que §9.18 costó cuatro sitios encontrar.
+ *
+ * Geometría: la misma escala y el mismo `left` que la foto de arriba, anclada al borde
+ * inferior de la página. La franja enseña así la continuación de la misma fotografía, al mismo
+ * zoom y con el mismo encuadre horizontal, en vez de un recorte a otra escala que se lee como
+ * una segunda imagen.
+ */
+function syncGlass(
+  canvas: fabric.Canvas,
+  pageWidth: number,
+  pageHeight: number,
+  bandTop: number,
+  variant: NewsVariant
+): void {
+  const photo = findBackgroundImage(canvas);
+  const existing = findByRole(canvas, "glass") as fabric.FabricImage | undefined;
+
+  if (!photo) {
+    // Sin foto no hay nada que ver a través de la franja; dejarla sería un rectángulo con la
+    // última imagen que hubo, congelada.
+    if (existing) canvas.remove(existing);
+    return;
+  }
+
+  const src = sourceUrl(photo);
+  let glass = existing;
+
+  // Re-filtrar un bitmap de 4096 px es lo caro de todo esto, y mover la franja no lo necesita:
+  // solo se reconstruye si la foto ha cambiado (o si no había cristal todavía).
+  if (!glass || sourceUrl(glass) !== src) {
+    if (glass) canvas.remove(glass);
+    // `_originalElement` y no `getElement()`: este último devuelve el bitmap ya filtrado en
+    // cuanto la imagen lleva efectos, y desenfocar eso encadenaría filtros sobre filtros.
+    const el = (photo as any)._originalElement as HTMLImageElement | HTMLCanvasElement | undefined;
+    if (!el) return;
+    glass = new fabric.FabricImage(el, {
+      selectable: false,
+      evented: false,
+      hoverCursor: "default",
+    });
+    // Sin esto, Fabric serializa la imagen incrustando el bitmap entero en base64 dentro de
+    // `canvas_json` — construirla desde un elemento es justo el caso que dispara eso (§9.18).
+    (glass as any)._srcUrl = src;
+    // Normalmente no hace nada —la foto ya llega reducida— pero si el elemento pasara de
+    // 4096 px el desenfoque borraría todo lo que sobresale, en silencio (§9.18).
+    downscaleOversizedSource(glass);
+    glass.filters = [new fabric.filters.Blur({ blur: GLASS_BLUR })];
+    glass.applyFilters();
+    canvas.add(glass);
+  }
+
+  mark(glass, "glass", variant);
+
+  // Misma escala que la foto, anclada abajo. `fitPhotoToBand` deja siempre la foto con al
+  // menos el alto de la banda superior, que es mayor que el de la franja, así que en la
+  // práctica cubre; el `max` cubre el caso degenerado (una foto en la que no fuera cierto)
+  // subiendo la escala lo justo para tapar la franja.
+  const natW = glass.width || 1;
+  const natH = glass.height || 1;
+  const bandHeight = pageHeight - bandTop;
+  const scale = Math.max(photo.scaleX ?? 1, bandHeight / natH, pageWidth / natW);
+  glass.set({
+    scaleX: scale,
+    scaleY: scale,
+    left: scale === (photo.scaleX ?? 1) ? (photo.left ?? 0) : (pageWidth - natW * scale) / 2,
+    top: pageHeight - natH * scale,
+  });
+  // El recorte se rehace siempre: la franja cambia de altura con el titular y con el formato.
+  glass.clipPath = new fabric.Rect({
+    left: 0,
+    top: bandTop,
+    width: pageWidth,
+    height: bandHeight,
+    absolutePositioned: true,
+  });
+  glass.setCoords();
+}
+
 // ── Composición ─────────────────────────────────────────────────────
 
 export interface ComposeNewsOptions {
   pageWidth: number;
   pageHeight: number;
   variant?: NewsVariant;
+  /** Opacidad de la franja, 0–1. Por defecto, la de la variante. */
+  bandAlpha?: number;
 }
 
 /**
@@ -535,6 +704,9 @@ export async function composeNewsTemplate(
 ): Promise<NewsVariant> {
   const { pageWidth, pageHeight } = opts;
   const variant = opts.variant ?? "navy";
+  // Rehacer la plantilla conserva la opacidad que el operador hubiera elegido: es un ajuste
+  // suyo sobre el diseño, no un dato del registro que haya que volver a leer de Twenty.
+  const bandAlpha = opts.bandAlpha ?? readBandOpacity(canvas, variant);
   clearNewsTemplate(canvas);
   // El titular suelto que el editor pone al abrir el registro lo sustituye el de la franja.
   for (const obj of canvas.getObjects()) {
@@ -554,7 +726,7 @@ export async function composeNewsTemplate(
     canvas.backgroundColor = NAVY;
   }
 
-  const built = buildBlocks(copy, pageWidth, variant);
+  const built = buildBlocks(copy, pageWidth, variant, bandAlpha);
   for (const obj of [built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
     if (obj) canvas.add(obj);
   }
@@ -615,6 +787,8 @@ function collect(canvas: fabric.Canvas): Built | null {
   const account = byRole.get("account") as fabric.Textbox | undefined;
   // Sin estos cuatro no hay nada que re-maquetar: son los que existen siempre.
   if (!band || !headline || !rule || !account) return null;
+  // El cristal no aparece aquí a propósito: no es un bloque que se apile ni que se recoloree,
+  // lo gestiona `syncGlass` a partir de la foto y de la franja ya colocada.
   return {
     band,
     headline,
@@ -639,7 +813,14 @@ export function applyNewsVariant(canvas: fabric.Canvas, variant: NewsVariant): b
   if (!built) return false;
   const p = PALETTES[variant];
 
-  built.band.set({ fill: p.band });
+  // Se conserva la opacidad que el operador hubiera puesto —mismo criterio que `setScrim` con
+  // el tono del velo (§9.27)— salvo que siguiera en el valor por defecto de la variante que
+  // deja, en cuyo caso pasa al de la nueva: las dos no cubren igual (ver DEFAULT_BAND_ALPHA).
+  const previous = ((built.band as any)._nwVariant as NewsVariant) ?? "navy";
+  const current = readBandOpacity(canvas, previous);
+  const alpha = current === DEFAULT_BAND_ALPHA[previous] ? DEFAULT_BAND_ALPHA[variant] : current;
+
+  built.band.set({ fill: withAlpha(p.band, alpha) });
   built.headline.set({ fill: p.ink });
   built.rule.set({ fill: withAlpha(p.ink, RULE_ALPHA) });
   built.account.set({ fill: withAlpha(p.ink, ACCOUNT_ALPHA) });
@@ -648,7 +829,10 @@ export function applyNewsVariant(canvas: fabric.Canvas, variant: NewsVariant): b
   built.figure?.set({ fill: p.figure });
   built.unit?.set({ fill: withAlpha(p.ink, UNIT_ALPHA) });
 
-  for (const obj of [built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
+  // El cristal no cambia de color, pero sí lleva la marca de variante: `currentVariant` coge
+  // el primer objeto que la tenga, y si se quedara con la vieja el panel mentiría.
+  const glass = findByRole(canvas, "glass");
+  for (const obj of [glass, built.band, built.chipBg, built.chip, built.figure, built.unit, built.headline, built.rule, built.account]) {
     if (!obj) continue;
     (obj as any)._nwVariant = variant;
     // `set` sobre el relleno de un texto no marca el objeto como sucio, así que Fabric

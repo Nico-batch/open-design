@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS designs (
   name TEXT DEFAULT 'Untitled Design',
   canvas_json TEXT DEFAULT '{}',
   width INTEGER DEFAULT 1080,
-  height INTEGER DEFAULT 1080,
+  height INTEGER DEFAULT 1350,
   thumbnail_url TEXT,
   twenty_record_id TEXT,
   twenty_object_type TEXT,

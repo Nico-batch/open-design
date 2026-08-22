@@ -119,7 +119,15 @@ export function findBackgroundImage(canvas: fabric.Canvas): fabric.FabricImage |
   const tagged = objects.find(isBackgroundImage);
   if (tagged) return tagged as fabric.FabricImage;
 
-  const legacy = objects.find((o) => o instanceof fabric.FabricImage && !isLogoObject(o));
+  // Las plantillas dejan imágenes propias en el lienzo (el cartel de un evento, el cristal de
+  // una noticia) y ninguna de las dos es el fondo: si el respaldo cogiera una de ellas, el
+  // refresco desde Twenty sustituiría esa en vez de la fotografía. Se leen las marcas a pelo
+  // en vez de importar los módulos de plantilla, que importan este fichero — sería un ciclo.
+  const isTemplateImage = (o: fabric.FabricObject) =>
+    (o as any)._tplRole != null || (o as any)._nwRole != null;
+  const legacy = objects.find(
+    (o) => o instanceof fabric.FabricImage && !isLogoObject(o) && !isTemplateImage(o)
+  );
   if (legacy) {
     (legacy as any)._isBgImage = true;
     return legacy as fabric.FabricImage;
