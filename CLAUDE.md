@@ -2375,6 +2375,11 @@ una copia aparte de la base de datos, no la del repo; **ninguna prueba escribió
 
 ### 9.30 Sin corte y sin color: una sola foto, difuminada hacia abajo
 
+> **La mitad de esto se invirtió en §9.33.** El "sin corte" duró tres versiones: el usuario
+> pidió justo lo contrario —un corte recto, para dar profundidad— así que el degradado de alfa
+> y su máscara de imagen desaparecieron. Sigue vigente todo lo demás: una sola foto a página
+> completa, sin bloque de color, con el cristal exactamente encima de la original.
+
 > **Corregido en §9.31**: el desenfoque por defecto pasó de 0.45 a **0.20**, la fotografía deja
 > de ser un objeto suelto mientras la plantilla está puesta, y la máscara se desborda de la
 > página. Todo lo demás de esta sección sigue vigente.
@@ -2795,3 +2800,79 @@ ratón real, sobre una **copia aparte de la base de datos**. 35 comprobaciones, 
   botones de tinta del panel «Noticia».
 - **Con la foto ya interactiva, un `Delete` puede borrarla.** Es el riesgo que §9.31 cerró
   bloqueándola; hoy se recupera con «Rehacer plantilla» o se previene con el candado.
+
+### 9.33 Corte recto en vez de degradado, y el titular a 72
+
+Dos peticiones del usuario sobre §9.30/§9.31: «quiero que el corte entre la zona desenfocada y
+la imagen sea un corte limpio, que se note de golpe la diferencia, quiero darle la profundidad»
+y «la letra a un tamaño de 72».
+
+#### El corte, y por qué esto simplifica el código en vez de complicarlo
+
+§9.30 se escribió entera alrededor de la premisa contraria —«que no parezca que haya un
+corte»— y de ahí salía su pieza más rebuscada: la máscara **tenía** que ser una imagen porque
+Fabric dibuja un `clipPath` con `drawObject(ctx, forClipping = true)`, que fuerza el relleno a
+negro opaco (`_setClippingProperties`) y se comía cualquier degradado en un `Rect`.
+
+Para un corte recto eso deja de ser un obstáculo y pasa a ser justamente lo que hace falta, así
+que `fadeMask` (un canvas de 8×512 con una rampa de alfa) se sustituye por `bandClip`, un `Rect`
+con `absolutePositioned`. Se van con él tres cosas:
+
+- el `FADE_RATIO` y la rampa de ~135 px;
+- la **única `data:` URL que quedaba en el `canvas_json`** (los 222 bytes del PNG de la rampa,
+  que §9.30 documentaba como excepción consciente);
+- y los problemas de interpolación de sus bordes, que costaron el bug del borde derecho de
+  §9.31 — un `Rect` no se interpola.
+
+El corte cae **exactamente en `bandTop`**, el borde superior de la zona de texto, así que la
+línea del corte y el sitio donde empieza a haber texto son la misma; el chip entra 64 px más
+abajo, ya dentro de lo desenfocado. La máscara se desborda 8 px por los lados y por abajo, pero
+**nunca por arriba**: ese borde es el corte y tiene que caer al píxel.
+
+El razonamiento editorial, para que no se vuelva a invertir sin querer: un desenfoque que
+*aparece* poco a poco se lee como una foto mal enfocada; uno que empieza en un borde recto se
+lee como una decisión, y separa la fotografía de la zona de lectura.
+
+#### El titular, fijo a 72
+
+`D.headlineMax`/`headlineMin` (96 → 66) se sustituyen por un único `D.headlineSize = 72`, y
+`fitHeadline` deja de elegir cuerpo: solo le queda la **válvula de seguridad** para cuando una
+palabra suelta no cabe de ancho (`Textbox` no parte palabras, así que un compuesto largo
+desborda por mucho que sobre altura), con un suelo del 70 % por debajo del cual el problema es
+de datos y no de maquetación.
+
+Con eso desaparece también `HEADLINE_MAX_LINES`: el número de líneas ya no limita nada. Si el
+titular ocupa cuatro, la zona de texto crece hacia arriba y la fotografía se queda con menos
+sitio — que es lo que `layout` ya sabía hacer desde §9.28, y la regla innegociable (el titular
+no se superpone a la foto) se sigue cumpliendo por construcción, porque el contenido se ancla
+por abajo y la franja se calcula *después*.
+
+Un cuerpo fijo tiene además la ventaja que se le pide a una plantilla: **todos los posts se
+parecen entre sí**. Medido sobre cuatro noticias reales de 81 a 109 caracteres, las cuatro caen
+en 3 líneas y el corte queda en el 59,0 % de la altura en las cuatro.
+
+#### Verificado contra el build de producción
+
+`pnpm run build` + `pnpm run start` con la CSP real, con Playwright, sobre una copia aparte de
+la base de datos. **Ninguna prueba escribió en Twenty.**
+
+- **El corte es un corte**, medido con el perfil de nitidez fila a fila (`|I(x,y) − I(x+1,y)|`
+  sobre la luminancia) en tres noticias: la caída va de 8,41 a 0,37 / 7,59 a 0,40 / 9,08 a 1,13,
+  y **más de la mitad de esa caída ocurre en una sola fila** (5,37 de 8,04; 3,91 de 7,19; 4,53
+  de 7,94). El degradado de §9.30 la repartía a lo largo de ~135 px y ninguna fila concreta
+  bajaba apenas nada — el mismo perfil que entonces se usó para demostrar lo contrario.
+- El `clipPath` guardado es un `Rect`, su `top` coincide con el de la zona de texto al píxel, y
+  **no queda ninguna `data:image` en el `canvas_json`**.
+- **Titular a 72** en las cuatro noticias, con cero solapes medidos par a par, margen inferior
+  de 48,0 px exacto, ningún bloque por encima del corte y el corte dejando siempre más del 35 %
+  de la página a la fotografía.
+- **Sin regresión**: las cuatro suites de §9.32 pasan enteras (61 comprobaciones) — encuadre
+  manual de la foto y su conservación, el cristal siguiendo el arrastre en vivo, el panel de
+  capas completo, el evento en paralelo y el borrador anterior al cambio. Cero errores de
+  consola.
+
+#### Límite conocido
+
+Con el desenfoque al 20 % (§9.31) el corte se ve, pero la diferencia entre las dos mitades es
+moderada. Si se quisiera más profundidad, el deslizador «Desenfoque del fondo» del panel
+«Noticia» es el sitio: ahí sí cambia cuánto separa el corte a las dos mitades, no dónde cae.

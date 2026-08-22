@@ -16,11 +16,16 @@ import { BRAND } from "./palette";
  * arriba y desenfocada abajo, con el chip de sección, el titular y el pie sobre la parte
  * desenfocada.
  *
- * No hay ningún bloque de color: la mitad de abajo es la misma foto, sin virar y sin velo.
- * Y no hay ningún corte entre las dos mitades, que es la razón de ser de todo el diseño —
- * la copia desenfocada va **exactamente encima de la original, con su misma transformación**,
- * y aparece con un degradado de alfa (ver `syncGlass` y `fadeMask`), de modo que lo único que
- * cambia a lo largo de esa transición es la nitidez. Los mismos píxeles, cada vez más suaves.
+ * No hay ningún bloque de color: la mitad de abajo es la misma foto, sin virar y sin velo. La
+ * copia desenfocada va **exactamente encima de la original, con su misma transformación** (ver
+ * `syncGlass`), así que lo único que cambia entre las dos mitades es la nitidez: los mismos
+ * píxeles, de golpe más suaves.
+ *
+ * Y de golpe es literal: el borde es **un corte recto** a la altura donde empieza la zona de
+ * texto (`bandClip`). §9.30 lo hizo al revés —un degradado de ~135 px para que no se notara
+ * ninguna costura— y §9.33 lo invirtió a petición del usuario: la línea dura da profundidad,
+ * separa la fotografía de la zona de lectura y se lee como una decisión y no como una foto
+ * mal enfocada.
  *
  * De ahí se sigue el resto: sin bloque de color, la legibilidad del texto tiene que salir de
  * otro sitio, y sale de tres a la vez — el desenfoque (que borra el *detalle* del fondo, que
@@ -218,15 +223,12 @@ export const BLUR_MIN = 0.05;
 export const BLUR_MAX = 0.8;
 
 /**
- * Altura de la transición entre la foto nítida y la desenfocada, como fracción de la página.
+ * Cuánto se desborda la máscara del desenfoque más allá de la página, por los lados y por
+ * abajo. El borde de arriba **no** se desborda: ese es el corte, y tiene que caer exacto.
  *
- * Es lo que hace que no se vea ningún corte: en vez de un borde donde acaba una y empieza la
- * otra, la copia desenfocada aparece con un degradado de alfa a lo largo de ~135 px (en una
- * página de 1350), de modo que el desenfoque *crece* en vez de encenderse.
+ * Es gratis: el recorte del área de trabajo (§9.13) ya corta a la página, y el cristal no
+ * puede pintar más allá de la propia foto.
  */
-const FADE_RATIO = 0.1;
-
-/** Cuánto se desborda la máscara del desenfoque más allá de la página, por lado. */
 const MASK_BLEED = 8;
 
 function withAlpha(hex: string, alpha: number): string {
@@ -264,8 +266,14 @@ const D = {
   /** Separación entre la cifra y su unidad. */
   gapFigureUnit: 16,
   gapAfterFigure: 24,
-  headlineMax: 96,
-  headlineMin: 66,
+  /**
+   * El cuerpo del titular, **fijo**. Antes era un rango (96 → 66) del que `fitHeadline`
+   * elegía el mayor que cupiera en tres líneas; el usuario pidió un tamaño concreto, y un
+   * cuerpo fijo además hace que todos los posts se parezcan entre sí, que es lo que se le
+   * pide a una plantilla. Lo que cede en su lugar es el alto de la zona de texto, que ya
+   * crecía hacia arriba cuando el titular no cabía (ver `layout`).
+   */
+  headlineSize: 72,
   headlineTracking: -2,
   headlineLineHeight: 0.98,
   gapAfterHeadline: 42,
@@ -274,8 +282,7 @@ const D = {
   accountSize: 34,
 };
 
-const HEADLINE_MAX_LINES = 3;
-/** Paso del ajuste automático del titular. 2 px sobre un rango de 30 son 15 intentos. */
+/** Paso con el que encoge la válvula de seguridad de `fitHeadline`. */
 const HEADLINE_STEP = 2;
 
 const FAMILY = "Barlow Condensed";
@@ -439,11 +446,11 @@ function buildBlocks(copy: NewsCopy, pageWidth: number, variant: NewsVariant): B
     // maquetación y la señal por la que `logo.ts` coloca la marca arriba a la izquierda.
     band: makeRect("band", variant, "rgba(0,0,0,0)"),
     headline: makeText(copy.titular, "headline", variant, {
-      fontSize: D.headlineMax * s,
+      fontSize: D.headlineSize * s,
       fontWeight: SEMIBOLD,
       fill: p.ink,
       width: usable,
-      charSpacing: tracking(D.headlineTracking, D.headlineMax),
+      charSpacing: tracking(D.headlineTracking, D.headlineSize),
       lineHeight: D.headlineLineHeight,
     }),
     rule: makeRect("rule", variant, withAlpha(p.ink, RULE_ALPHA)),
@@ -512,34 +519,28 @@ function shrinkToLine(box: fabric.Textbox, maxWidth: number): number {
 }
 
 /**
- * Elige el cuerpo del titular: el **mayor** entre 96 y 66 px que quepa en 3 líneas y dentro
- * del hueco que deja la franja en su posición nominal (62 %).
+ * Deja el titular en su cuerpo fijo, y solo lo encoge si una **palabra suelta** no cabe de
+ * ancho.
  *
- * Las dos condiciones son de la guía y hacen falta las dos. Solo con "≤ 3 líneas" un titular
- * corto se quedaría a 96 px ocupando media página y empujando la franja muy por encima del
- * 62 %; solo con el hueco disponible, uno largo se partiría en cinco líneas. Si ni a 66 px
- * cabe —pasa con los titulares de 98 caracteres, que son lo normal en el CRM— se queda en 66
- * y es la franja la que crece hacia arriba: la regla innegociable es que el titular no se
- * superponga a la foto, no que la franja mida exactamente el 38 %.
+ * Esa es la única razón que queda para tocarlo: `Textbox` no parte palabras, así que un
+ * topónimo o un compuesto largo desborda la caja por mucho que sobre altura, y ahí no hay
+ * maquetación que valga. El número de líneas ya no limita nada — si el titular ocupa cuatro,
+ * la zona de texto crece hacia arriba y la fotografía se queda con menos sitio, que es
+ * exactamente lo que `layout` ya sabía hacer.
  */
-function fitHeadline(box: fabric.Textbox, maxWidth: number, budget: number, scale: number): void {
-  const max = D.headlineMax * scale;
-  const min = D.headlineMin * scale;
+function fitHeadline(box: fabric.Textbox, maxWidth: number, scale: number): void {
+  const size = D.headlineSize * scale;
   const step = HEADLINE_STEP * scale;
-  box.set({ width: maxWidth });
-
-  for (let size = max; size >= min; size -= step) {
-    box.set({ fontSize: size, charSpacing: tracking(D.headlineTracking, size / scale) });
-    box.initDimensions();
-    const tooManyLines = box.textLines.length > HEADLINE_MAX_LINES;
-    // El ajuste de línea no salva una palabra más ancha que la caja: `Textbox` no parte
-    // palabras, así que un topónimo largo desborda por mucho que sobre altura.
-    const overflows = box.textLines.some((_, li) => box.getLineWidth(li) > maxWidth + 1);
-    if (!tooManyLines && !overflows && textHeight(box) <= budget) return;
-  }
-
-  box.set({ fontSize: min, charSpacing: tracking(D.headlineTracking, D.headlineMin) });
+  box.set({ width: maxWidth, fontSize: size, charSpacing: tracking(D.headlineTracking, D.headlineSize) });
   box.initDimensions();
+
+  // Suelo del 70 %: por debajo de eso el titular ya no es el titular, y una palabra tan larga
+  // es un caso de datos, no de diseño.
+  for (let attempt = size; attempt >= size * 0.7; attempt -= step) {
+    if (!box.textLines.some((_, li) => box.getLineWidth(li) > maxWidth + 1)) return;
+    box.set({ fontSize: attempt - step, charSpacing: tracking(D.headlineTracking, (attempt - step) / scale) });
+    box.initDimensions();
+  }
 }
 
 interface LayoutResult {
@@ -570,8 +571,7 @@ function layout(built: Built, canvas: fabric.Canvas, pageWidth: number, pageHeig
   const fixed = chipHeight + chipGap + figureHeight + figureGap + ruleBlock + accountHeight;
 
   const nominalBandTop = Math.round(pageHeight * D.bandTopRatio);
-  const budget = pageHeight - nominalBandTop - D.padTop * s - D.padBottom * s - fixed;
-  fitHeadline(built.headline, usable, budget, s);
+  fitHeadline(built.headline, usable, s);
 
   const headlineHeight = textHeight(built.headline);
   const content = fixed + headlineHeight;
@@ -819,59 +819,30 @@ function sourceUrl(img: fabric.FabricImage): string {
 }
 
 /**
- * La máscara que hace que no se vea ningún corte.
+ * La máscara del desenfoque: un corte limpio a la altura de `top`.
  *
- * Es una **imagen** y no un rectángulo, y ahí está todo el asunto: Fabric dibuja un `clipPath`
- * con `drawObject(ctx, forClipping = true)`, que **fuerza el relleno a negro opaco**
- * (`_setClippingProperties`), así que un degradado en el `fill` de un `Rect` se pierde y la
- * máscara sale opaca de borde a borde. Una `FabricImage`, en cambio, se pinta con `drawImage`
- * y conserva el alfa de sus propios píxeles — y como el recorte se aplica con
- * `globalCompositeOperation = destination-in`, ese alfa se traduce en transparencia real.
+ * **Era un degradado y ahora no lo es**, y el cambio va en contra de la premisa con la que se
+ * escribió §9.30 ("que no parezca que haya un corte"). El usuario pidió lo contrario: que la
+ * diferencia se note de golpe, para que la fotografía gane profundidad — arriba nítida, abajo
+ * desenfocada, y una línea entre las dos. Un desenfoque que *aparece* poco a poco se lee como
+ * una foto mal enfocada; uno que empieza en un borde recto se lee como una decisión.
  *
- * De modo que la copia desenfocada no *empieza* en una línea: va apareciendo a lo largo del
- * degradado, mezclándose con la foto nítida que tiene justo debajo. Como las dos son la misma
- * imagen en la misma posición, la mezcla no duplica nada: lo único que cambia es la nitidez.
+ * Y eso simplifica lo que §9.30 tuvo que rodear: allí la máscara **tenía** que ser una imagen
+ * porque Fabric dibuja un `clipPath` con `drawObject(ctx, forClipping = true)`, que fuerza el
+ * relleno a negro opaco (`_setClippingProperties`) y se comía cualquier degradado. Para un
+ * corte recto eso deja de ser un problema y pasa a ser justo lo que hace falta, así que basta
+ * un `Rect`. De paso desaparece la única `data:` URL que quedaba en el `canvas_json` (los 222
+ * bytes del PNG de la rampa) y con ella los problemas de interpolación de sus bordes.
  */
-function fadeMask(
-  pageWidth: number,
-  fadeTop: number,
-  fadeHeight: number,
-  pageHeight: number
-): fabric.FabricImage | null {
-  // La rampa solo varía en vertical, así que el ancho no aporta resolución… pero **no puede ser
-  // de 1 px**: al escalar un origen de un solo texel hasta el ancho de la página, la
-  // interpolación deja los bordes a medio alfa y el desenfoque no llegaba al borde derecho.
-  // Con 8 px de ancho los texels interpolados quedan lejos del área que importa.
-  const RAMP = 512;
-  const COLS = 8;
-  const el = document.createElement("canvas");
-  el.width = COLS;
-  el.height = RAMP;
-  const ctx = el.getContext("2d");
-  if (!ctx) return null;
-  const total = pageHeight - fadeTop;
-  if (total <= 0) return null;
-  // Dónde acaba la rampa dentro de la máscara, en fracción de su altura.
-  const stop = Math.min(1, fadeHeight / total);
-  const grad = ctx.createLinearGradient(0, 0, 0, RAMP);
-  grad.addColorStop(0, "rgba(0,0,0,0)");
-  grad.addColorStop(stop, "rgba(0,0,0,1)");
-  grad.addColorStop(1, "rgba(0,0,0,1)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, COLS, RAMP);
-
-  // Y además se desborda por los lados y por abajo. Es gratis —el recorte del área de trabajo
-  // (§9.13) ya corta a la página, y el cristal no puede pintar más allá de la propia foto— y
-  // cubre de una vez los dos motivos por los que el borde se quedaba corto: la interpolación
-  // del bitmap y el error de precisión de invertir la matriz del cristal, que va escalado y
-  // desplazado (`absolutePositioned`).
-  const mask = new fabric.FabricImage(el, { left: -MASK_BLEED, top: fadeTop });
-  mask.set({
-    scaleX: (pageWidth + 2 * MASK_BLEED) / COLS,
-    scaleY: (total + MASK_BLEED) / RAMP,
+function bandClip(pageWidth: number, top: number, pageHeight: number): fabric.Rect {
+  const clip = new fabric.Rect({
+    left: -MASK_BLEED,
+    top,
+    width: pageWidth + 2 * MASK_BLEED,
+    height: pageHeight - top + MASK_BLEED,
   });
-  mask.absolutePositioned = true;
-  return mask;
+  clip.absolutePositioned = true;
+  return clip;
 }
 
 /**
@@ -941,10 +912,10 @@ function syncGlass(
     top: photo.top ?? 0,
   });
   // La máscara se rehace siempre: el borde del desenfoque se mueve con el titular y con el
-  // formato. Arranca por encima de `bandTop` para que el desenfoque ya esté al 100 % cuando
-  // empieza el texto, que va 64 px más abajo.
-  const fade = Math.round(pageHeight * FADE_RATIO);
-  glass.clipPath = fadeMask(pageWidth, Math.max(0, bandTop - fade), fade, pageHeight) ?? undefined;
+  // formato. Cae **exactamente** en `bandTop`, que es el borde superior de la zona de texto:
+  // el corte y el sitio donde empieza a haber texto son la misma línea, y el chip entra 64 px
+  // más abajo, ya dentro de lo desenfocado.
+  glass.clipPath = bandClip(pageWidth, bandTop, pageHeight);
   glass.setCoords();
 }
 
@@ -1084,10 +1055,10 @@ export function relayoutNewsTemplate(
   const built = collect(canvas);
   if (!built) return false;
   const s = pageWidth / REF_WIDTH;
-  // Los cuerpos van en proporción al ancho, y el titular vuelve a su cuerpo nominal antes de
-  // reajustarse: `fitHeadline` solo sabe encoger desde el máximo, así que sin este reinicio
-  // cada cambio de formato lo dejaría un poco más pequeño que el anterior, sin vuelta atrás.
-  built.headline.set({ fontSize: D.headlineMax * s });
+  // Los cuerpos van en proporción al ancho. El titular lo reinicia `fitHeadline`, que ahora
+  // parte siempre del cuerpo fijo en vez de ir bajando desde un máximo, así que ya no puede
+  // arrastrar de un formato al siguiente el encogimiento del anterior.
+  built.headline.set({ fontSize: D.headlineSize * s });
   if (built.chip) built.chip.set({ fontSize: D.chipSize * s });
   if (built.figure) built.figure.set({ fontSize: D.figureSize * s });
   if (built.unit) built.unit.set({ fontSize: D.unitSize * s });
