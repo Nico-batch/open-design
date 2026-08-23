@@ -432,12 +432,16 @@ fichero no existe (alguien sin Twenty configurado puede seguir usando el editor 
 Campo tipo **Link** en la ficha del registro, apuntando a:
 
 ```
-https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}&objectType=news    ← News
-https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id del registro}}&objectType=event   ← Events
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id}}&objectType=news                 ← post de una News
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id}}&objectType=event                ← post de un Event
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id}}&objectType=news&format=story    ← story de una News
+https://<DOMINIO-DEL-EDITOR>/edit?recordId={{id}}&objectType=event&format=story   ← story de un Event
 ```
 
-`objectType` es opcional y por defecto vale `news`, así que los enlaces que ya existían en
-las fichas de noticias (sin ese parámetro) siguen funcionando tal cual — ver §9.19.
+Los dos parámetros extra son **opcionales**: `objectType` vale `news` por defecto y `format`
+vale `post`, así que los enlaces que ya existían en las fichas (sin ninguno de los dos) siguen
+funcionando tal cual — ver §9.19 y §9.35. En el CRM viven en dos campos Link distintos:
+`editarImagen` (el post, ya relleno) y `editarImagenStory` (la story, pendiente de rellenar).
 
 `<DOMINIO-DEL-EDITOR>` depende del despliegue de la Fase 4 (ver §11 — dominio público +
 Basic Auth de app, sin middleware de Traefik necesario). **Para probarlo ya, en local:**
@@ -1688,8 +1692,13 @@ quedaría cubriendo poco más de la mitad— y llama a este re-apilado.
 
 #### El formato vertical va a "Imagen Story"
 
+> **Desfasado en §9.35 en dos puntos**: hoy **`news` también tiene `imagenStory`** (el
+> usuario lo añadió después), y el destino ya **no se deduce de la proporción del lienzo**
+> sino del formato declarado en el enlace. El resto sigue vigente.
+
 Comprobado por MCP: `eventCustom` tiene `imagenStory` además de `imagenEditada`; **`news`
-no lo tiene**. Así que `TwentyObjectDef` gana un `storyImageField` opcional y
+no lo tiene** (cierto cuando se escribió esto; ver el aviso de arriba). Así que
+`TwentyObjectDef` gana un `storyImageField` opcional y
 `setRecordEditedImage` recibe un `target` (`"feed" | "story"`) y **devuelve el campo que ha
 escrito**. Si se pide historia sobre un objeto que no la tiene, cae al campo de siempre en
 lugar de fallar — perder el trabajo por un campo que falta en el CRM sería peor.
@@ -1788,7 +1797,8 @@ donde sí se compone sola. Los eventos no se tocan.
 - `publicarEn` está casi siempre vacío, y el pie no lleva fecha (decisión del usuario: solo
   `@elfarodealicante`), así que no hay ninguna regla de zona horaria que mantener aquí.
 - `news` **no tiene `imagenStory`**: una noticia en 1080×1920 cae a `imagenEditada`, que es
-  lo que ya hacía `setRecordEditedImage` (§9.27) — no hizo falta tocar nada.
+  lo que ya hacía `setRecordEditedImage` (§9.27) — no hizo falta tocar nada. **Ya no es
+  cierto**: el usuario añadió el campo después y §9.35 lo activa para `news`.
 
 #### Barlow Condensed, un activo nuevo
 
@@ -2925,3 +2935,116 @@ que la fotografía siga leyéndose como una sola imagen mientras el fondo se apa
   48,0 px exacto y ningún bloque por encima del borde.
 - **Sin regresión**: las cuatro suites de §9.32 pasan enteras (61 comprobaciones). Cero errores
   de consola.
+
+### 9.35 Post y story: dos piezas por registro
+
+Petición del usuario: que al abrir el editor desde una noticia o un evento se declare por URL
+si se está maquetando el **post** o la **story** de Instagram; que en el caso de la story el
+enlace de la imagen se escriba en **`imagenStory`**; y que la foto de origen sea la misma que
+usa el post hoy.
+
+Hasta ahora había **un solo borrador por (objeto, registro)** y el campo destino se **deducía
+de la proporción del lienzo** (`height >= width * 1.7`, §9.27). Las dos cosas se llevaban mal
+entre sí: la única forma de publicar una story era cambiar el tamaño a mano en el toolbar, y
+como el lienzo era el mismo, hacerlo destruía la maqueta del post.
+
+#### Lo que dice el CRM hoy (comprobado por MCP, corrige a §9.27)
+
+**`news` ya tiene `imagenStory`** — el usuario lo añadió después de que se escribiera aquel
+soporte, así que la afirmación de §9.27/§9.28 de que solo lo tenía `eventCustom` ya no vale.
+Los dos objetos tienen hoy los mismos cuatro campos Links, dos de entrada y dos de salida:
+
+| campo | qué es |
+|---|---|
+| `editarImagen` | enlace de entrada al editor — relleno por el flujo de n8n que crea el registro |
+| `editarImagenStory` | el mismo para la story — **vacío en todos los registros** |
+| `imagenEditada` | destino de la imagen del post |
+| `imagenStory` | destino de la imagen de la story |
+
+Activar `news` es literalmente una línea (`storyImageField: "imagenStory"` en la tabla
+`OBJECTS`): el `target` y el fallback de `setRecordEditedImage` ya existían desde §9.27. El
+campo sigue siendo **opcional** en `TwentyObjectDef` aunque hoy lo tengan los dos, porque el
+fallback es lo que evita perder el trabajo si un objeto futuro no lo tuviera.
+
+#### La clave de un borrador pasa a ser una terna
+
+`?format=post|story`, junto a `recordId` y `objectType`. **Ausente o desconocido vale `post`**,
+igual que `objectType` vale `news`: los enlaces que ya están en las fichas no lo llevan y
+siguen abriendo exactamente el borrador de siempre.
+
+La decisión de fondo —que el usuario eligió frente a compartir un solo lienzo— es que **post y
+story son dos borradores independientes del mismo registro**, cada uno con su tamaño y su
+maqueta. Compartirlos habría significado que abrir un enlace redimensiona y re-maqueta lo que
+había hecho el otro, en los dos sentidos.
+
+Eso convierte la clave de `designs` en `(objeto, registro, formato)`: columna nueva
+`publication_format` y el índice único ampliado. Los `COALESCE` del índice y de las consultas
+son ya **dos**, uno por cada vez que la clave ha crecido, y hacen lo mismo que hizo el primero:
+las filas anteriores tienen la columna a `NULL` y se leen como lo que son —noticias, y posts—
+sin tocar ni una. `migrate()` en `db.ts` ya tenía los dos patrones exactos que hacían falta
+(añadir columna por `PRAGMA table_info`, y **detectar el índice desfasado por su SQL** en vez
+de por un número de versión) y solo hubo que extenderlos.
+
+Detalle menor pero necesario: los dos borradores comparten titular, así que el de story lleva
+un sufijo `· Story` en el nombre o en la galería serían dos filas idénticas.
+
+**Y la clave del ref guardia de `app.tsx` tiene que incluir el formato.** Sin eso, ir del
+enlace del post al de la story en la misma sesión no reabriría nada — el ref ya habría visto
+ese par y se saltaría la apertura.
+
+#### El destino lo decide el enlace, no la proporción del lienzo
+
+Segunda decisión del usuario, y la que quita la ambigüedad que tenía §9.27: el formato se
+guarda con el diseño y **manda siempre**. Un borrador de story escribe en `imagenStory` aunque
+el operador cambie el tamaño a 1080×1080 desde el desplegable del toolbar — cambiar el tamaño
+reencuadra la pieza, no la convierte en otra. Verificado explícitamente, porque es justo el
+caso que la regla anterior resolvía al revés.
+
+El **contrato de subida no cambia**: `publish-image` sigue recibiendo `target=feed|story` en
+el multipart y `ImageTarget` sigue llamándose igual en el servidor; `publishToTwenty` mapea
+`post → feed` en una línea. Así no hubo que tocar el handler ni su logging por fases (§9.10).
+
+#### Lo que no hizo falta tocar
+
+`page-canvas.tsx` (el bootstrap y el refresco de la imagen desde Twenty son idénticos para las
+dos piezas: **la foto de origen es la misma**, que era el requisito), `toolbar.tsx` (su mensaje
+ya distinguía por `field === "imagenStory"` desde §9.27), `left-sidebar.tsx` (solo mira el
+objeto) y las dos plantillas, que ya se re-maquetan a 1080×1920 desde §9.27/§9.28.
+
+#### Verificado contra el build de producción
+
+`pnpm run build && pnpm run start` en `:8788` con la CSP real (regla de §9.11/§10.3), con
+Playwright y ratón real, sobre una **copia aparte de la base de datos**.
+
+- **Migración** sobre una base creada con el **esquema antiguo** y dos borradores dentro (uno
+  sin tipo, de News, y uno de evento): columna añadida, índice rehecho a la terna, las dos
+  filas intactas con `publication_format` a `NULL`. `schema.sql` corriendo antes de la
+  migración no falla pese a que su índice menciona una columna que aún no existe (el
+  `IF NOT EXISTS` cortocircuita antes de resolver nombres).
+- **Find-or-create**, cinco casos: sin `format` retoma el borrador de siempre; `format=post`
+  explícito, el mismo; `format=story` crea uno **nuevo** en 1080×1920; repetirlo retoma ese
+  mismo (idempotente); `format=zzz` cae a post.
+- **En navegador, con una noticia real**: dos borradores distintos, y el `bgSrc` guardado de
+  los dos es **la misma URL del proxy** (`/api/twenty/news/<id>/image`) — el requisito de que
+  la foto de referencia sea la misma. Sin `data:image` en ningún `canvas_json`.
+- **Destino en el CRM real**, leyendo el registro de vuelta por MCP: desde la story escribe en
+  **`imagenStory`** con el toast «Guardado en Imagen Story»; desde el post, en
+  **`imagenEditada`**. Y con el lienzo de la story cambiado a 1080×1080, **sigue yendo a
+  `imagenStory`**.
+- **Plantilla de noticias a 9:16**: se aplica con todos sus roles, margen inferior de 48,0 px
+  exacto y sin data URLs.
+- **Sin regresión en eventos**: los dos borradores componen su plantilla (el de story entra en
+  modo cartel), conservan `_tplRole` y su velo, sin ningún `_nwRole` de por medio; publicar
+  desde la story del evento sigue yendo a `imagenStory`. Un `:type` inventado sigue dando
+  `400` en las dos rutas.
+- **Las cuatro escrituras de prueba en el CRM revertidas a vacío** después, como siempre
+  (comprobado con una consulta que ya no encuentra ninguna URL de `localhost`). Cero errores
+  de consola en todos los pasos.
+
+#### Pendiente, fuera de este repo
+
+**`editarImagenStory` está vacío en todos los registros**: hay que rellenarlo con
+`…/edit?recordId={{id}}&objectType=news|event&format=story`. `editarImagen` lo pone el flujo
+de n8n que crea el registro, así que lo natural es añadir ahí la segunda fórmula al lado de la
+que ya existe; para los registros ya creados haría falta un backfill puntual. Hasta que eso
+exista, la story se abre pegando el parámetro a mano en la URL.

@@ -8,6 +8,8 @@ import {
   type TwentyObjectType,
   isImageTarget,
   type ImageTarget,
+  coercePublicationFormat,
+  type PublicationFormat,
 } from "./twenty.js";
 import { editorAuth } from "./auth.js";
 
@@ -83,6 +85,7 @@ const DesignSchema = z.object({
   thumbnail_url: z.string().nullable(),
   twenty_record_id: z.string().nullable(),
   twenty_object_type: z.string().nullable(),
+  publication_format: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -490,17 +493,27 @@ function parseObjectType(raw: string): TwentyObjectType | null {
 }
 
 /**
- * Tamaño del lienzo con el que nace un diseño segun de que objeto venga.
+ * Tamaño del lienzo con el que nace un diseño, segun de que objeto venga y que pieza sea.
  *
- * 4:5 en los dos casos. Un evento llega casi siempre con un cartel vertical por imagen
- * (comprobado sobre la instancia real: `cartel-...-598x1024.jpg`, `...-768x960.jpg`), y una
- * noticia usa la plantilla de franja, que esta maquetada para vertical; ademas 4:5 es el
- * formato que mas pantalla ocupa en el feed. Solo afecta a diseños nuevos; los ya creados
- * conservan el tamaño con el que se guardaron.
+ * Un post es 4:5 en los dos casos. Un evento llega casi siempre con un cartel vertical por
+ * imagen (comprobado sobre la instancia real: `cartel-...-598x1024.jpg`, `...-768x960.jpg`),
+ * y una noticia usa la plantilla de franja, que esta maquetada para vertical; ademas 4:5 es
+ * el formato que mas pantalla ocupa en el feed. Una story es siempre 9:16, la medida de
+ * Instagram Stories. Solo afecta a diseños nuevos; los ya creados conservan el tamaño con el
+ * que se guardaron.
  */
-const DEFAULT_CANVAS_SIZE: Record<TwentyObjectType, { width: number; height: number }> = {
-  news: { width: 1080, height: 1350 },
-  event: { width: 1080, height: 1350 },
+const DEFAULT_CANVAS_SIZE: Record<
+  TwentyObjectType,
+  Record<PublicationFormat, { width: number; height: number }>
+> = {
+  news: {
+    post: { width: 1080, height: 1350 },
+    story: { width: 1080, height: 1920 },
+  },
+  event: {
+    post: { width: 1080, height: 1350 },
+    story: { width: 1080, height: 1920 },
+  },
 };
 
 async function twentyRecordResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
@@ -566,13 +579,22 @@ app.post("/api/designs/from-twenty/:type/:recordId", async (c) => {
   const { type, recordId } = c.req.param();
   const objectType = parseObjectType(type);
   if (!objectType) return c.json({ error: `Tipo de objeto de Twenty desconocido: ${type}` }, 400);
+  // Qué pieza del registro se va a maquetar. Un valor ausente o desconocido cae a "post",
+  // que es lo que son los enlaces que ya existen en las fichas (`?recordId=&objectType=`,
+  // sin formato) y lo que había antes de distinguirlas.
+  const format = coercePublicationFormat(c.req.query("format"));
 
-  // COALESCE por el mismo motivo que el índice único (schema.sql): los diseños creados
-  // antes del soporte multi-objeto no tienen tipo guardado y son de News.
-  const existing = await get<z.infer<typeof DesignSchema>>(
-    "SELECT * FROM designs WHERE twenty_record_id = ? AND COALESCE(twenty_object_type, 'news') = ?",
-    [recordId, objectType]
-  );
+  // La búsqueda es por la terna entera (objeto, registro, formato): de un mismo registro
+  // salen dos borradores independientes, el del feed y el de la story. Los COALESCE, por el
+  // mismo motivo que en el índice único (schema.sql): los diseños creados antes de cada uno
+  // de esos dos cambios tienen la columna a NULL y son, respectivamente, de News y posts.
+  const findSql =
+    "SELECT * FROM designs WHERE twenty_record_id = ? " +
+    "AND COALESCE(twenty_object_type, 'news') = ? " +
+    "AND COALESCE(publication_format, 'post') = ?";
+  const findParams = [recordId, objectType, format];
+
+  const existing = await get<z.infer<typeof DesignSchema>>(findSql, findParams);
   if (existing) {
     const pages = await query<z.infer<typeof PageSchema>>(
       "SELECT * FROM pages WHERE design_id = ? ORDER BY sort_order",
@@ -588,16 +610,16 @@ app.post("/api/designs/from-twenty/:type/:recordId", async (c) => {
   } catch {
     // best effort — fall back to the default name
   }
+  // Los dos borradores del mismo registro comparten titular, así que sin sufijo serían dos
+  // filas idénticas en la galería y no habría forma de saber cuál se está abriendo.
+  if (format === "story") name = `${name.slice(0, 112)} · Story`;
 
-  const size = DEFAULT_CANVAS_SIZE[objectType];
+  const size = DEFAULT_CANVAS_SIZE[objectType][format];
   await run(
-    "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id, twenty_object_type) VALUES (?, ?, ?, ?, ?, ?)",
-    [name, "{}", size.width, size.height, recordId, objectType]
+    "INSERT INTO designs (name, canvas_json, width, height, twenty_record_id, twenty_object_type, publication_format) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [name, "{}", size.width, size.height, recordId, objectType, format]
   );
-  const row = await get<z.infer<typeof DesignSchema>>(
-    "SELECT * FROM designs WHERE twenty_record_id = ? AND COALESCE(twenty_object_type, 'news') = ?",
-    [recordId, objectType]
-  );
+  const row = await get<z.infer<typeof DesignSchema>>(findSql, findParams);
   await run(
     "INSERT INTO pages (design_id, title, canvas_json, sort_order) VALUES (?, ?, ?, ?)",
     [row!.id, "Page 1", "{}", 0]

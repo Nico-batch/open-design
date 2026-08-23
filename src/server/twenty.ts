@@ -56,6 +56,26 @@ export function isTwentyObjectType(value: unknown): value is TwentyObjectType {
   return typeof value === "string" && (TWENTY_OBJECT_TYPES as readonly string[]).includes(value);
 }
 
+// ── Formato de publicación ──────────────────────────────────────────
+//
+// De cada registro se maquetan dos piezas distintas: el post del feed y la story vertical.
+// Cuál se está editando lo declara el enlace de la ficha (`?format=post|story`) y se guarda
+// con el diseño, así que son dos borradores independientes del mismo registro. Espejo de
+// `src/client/lib/twenty.ts`, igual que la tabla de objetos de arriba.
+
+export const PUBLICATION_FORMATS = ["post", "story"] as const;
+export type PublicationFormat = (typeof PUBLICATION_FORMATS)[number];
+
+/** Los enlaces de Twenty que ya existen apuntan a `?recordId=` sin `format`, y los diseños
+ *  creados antes de esta distinción no lo tienen guardado: en ambos casos son posts. */
+export const DEFAULT_PUBLICATION_FORMAT: PublicationFormat = "post";
+
+export function coercePublicationFormat(value: unknown): PublicationFormat {
+  return typeof value === "string" && (PUBLICATION_FORMATS as readonly string[]).includes(value)
+    ? (value as PublicationFormat)
+    : DEFAULT_PUBLICATION_FORMAT;
+}
+
 interface TwentyObjectDef {
   /** Campo raíz singular de la query (`news(filter: ...)`). */
   queryField: string;
@@ -74,9 +94,11 @@ interface TwentyObjectDef {
   /** Cómo convertir esos campos al payload plano que consume el cliente. */
   readFields?: (node: Record<string, any>) => Record<string, unknown>;
   /**
-   * Campo Links donde se escribe la versión vertical (1080×1920). Opcional: News no tiene
-   * `imagenStory` en esta instancia —comprobado por MCP— y una historia suya cae al campo
-   * de siempre en vez de fallar.
+   * Campo Links donde se escribe la versión vertical (1080×1920). Hoy lo tienen los dos
+   * objetos —comprobado por MCP contra la instancia; News lo ganó después de que se
+   * escribiera este soporte—, pero sigue siendo opcional a propósito: si un objeto futuro
+   * no lo tuviera, una historia suya cae al campo de siempre en vez de fallar y perder el
+   * trabajo por un campo que falta en el CRM.
    */
   storyImageField?: string;
 }
@@ -113,6 +135,7 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
     // comprobado por introspección; ojo, **no existe "Sucesos"**, así que el rojo de la
     // guía de marca no tiene ningún valor al que aplicarse. Puede llegar null.
     fieldsSelection: "categoria",
+    storyImageField: "imagenStory",
     readFields: (node) => ({ categoria: blankToNull(node.categoria) }),
   },
   event: {

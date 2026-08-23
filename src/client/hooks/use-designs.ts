@@ -1,7 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "preact/hooks";
 import type { Design, DesignWithPages, Template, Page } from "../types";
 import { api } from "../api";
-import { coerceTwentyObjectType, type TwentyObjectType } from "../lib/twenty";
+import {
+  coerceTwentyObjectType,
+  coercePublicationFormat,
+  type TwentyObjectType,
+  type PublicationFormat,
+} from "../lib/twenty";
 
 export function useDesigns(
   getCanvasJSONForPage: (pageId: string) => string,
@@ -85,12 +90,15 @@ export function useDesigns(
       const recordId = activeDesign?.twenty_record_id;
       if (!recordId) throw new Error("Este diseño no está vinculado a ningún registro de Twenty");
       const objectType = coerceTwentyObjectType(activeDesign?.twenty_object_type);
-      // El formato decide a qué campo del registro va la URL: el vertical 9:16 es una
-      // historia y tiene el suyo propio ("Imagen Story"). El umbral separa con holgura los
-      // tres presets: 1080×1920 da 1.78 y el siguiente más alto, 1080×1350, se queda en
-      // 1.25.
-      const { width, height } = getCanvasSize();
-      const target = height >= width * 1.7 ? "story" : "feed";
+      // A qué campo del registro va la URL lo decide el formato con el que se abrió el
+      // borrador ("Imagen Story" para una story, "Imagen Editada" para un post), no la
+      // proporción del lienzo. Es una decisión declarada en el enlace de la ficha y guardada
+      // con el diseño: cambiar el tamaño desde el desplegable del toolbar reencuadra la
+      // pieza, no la convierte en otra.
+      // "feed" es el nombre que usa el servidor para el destino del post (ver ImageTarget en
+      // src/server/twenty.ts); el contrato de subida no cambia con esto.
+      const target =
+        coercePublicationFormat(activeDesign?.publication_format) === "story" ? "story" : "feed";
       const form = new FormData();
       form.append("file", pngBlob, "design.png");
       form.append("target", target);
@@ -120,7 +128,7 @@ export function useDesigns(
       }
       return { url: data.url, field: data.field };
     },
-    [activeDesign, getCanvasSize]
+    [activeDesign]
   );
 
   // Creating a design only returns the design row (no pages, even though the server
@@ -148,15 +156,20 @@ export function useDesigns(
     }
   }, [activateCreatedDesign]);
 
-  // Entry point from Twenty (?recordId=...&objectType=...). Finds the design already
-  // linked to that record, or creates one — the same record always resumes the same
-  // draft. The pair (objeto, registro) is the key: News and Events are separate objects.
+  // Entry point from Twenty (?recordId=...&objectType=...&format=...). Finds the design
+  // already linked to that record, or creates one — el mismo enlace siempre retoma el mismo
+  // borrador. La clave es la terna (objeto, registro, formato): News y Events son objetos
+  // distintos, y de cada registro salen dos piezas independientes, el post y la story.
   const openFromTwentyRecord = useCallback(
-    async (recordId: string, objectType: TwentyObjectType): Promise<string | undefined> => {
+    async (
+      recordId: string,
+      objectType: TwentyObjectType,
+      format: PublicationFormat
+    ): Promise<string | undefined> => {
       try {
         const full = await api<DesignWithPages>(
           "POST",
-          `/api/designs/from-twenty/${objectType}/${recordId}`
+          `/api/designs/from-twenty/${objectType}/${recordId}?format=${format}`
         );
         setDesigns((prev) => (prev.some((d) => d.id === full.id) ? prev : [full, ...prev]));
         activeIdRef.current = full.id;

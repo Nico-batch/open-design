@@ -15,25 +15,31 @@ db.exec(readFileSync(join(__dirname, "schema.sql"), "utf8"));
 // schema.sql es idempotente (CREATE ... IF NOT EXISTS), lo que sirve para crear la base
 // desde cero pero NO para cambiar algo que ya existe: una columna nueva no aparece en una
 // tabla ya creada, y un índice que cambia de definición se ignora en silencio porque su
-// nombre ya está tomado. Estas dos migraciones cubren justo eso para el soporte
-// multi-objeto de Twenty (News + Events).
+// nombre ya está tomado. Estas migraciones cubren justo eso para los dos cambios que han
+// ampliado la clave de un borrador: el soporte multi-objeto (News + Events) y la distinción
+// entre post y story.
 function migrate() {
   const columns = db.prepare("PRAGMA table_info(designs)").all() as Array<{ name: string }>;
   if (!columns.some((c) => c.name === "twenty_object_type")) {
     db.exec("ALTER TABLE designs ADD COLUMN twenty_object_type TEXT");
   }
+  if (!columns.some((c) => c.name === "publication_format")) {
+    db.exec("ALTER TABLE designs ADD COLUMN publication_format TEXT");
+  }
 
-  // El índice antiguo era único solo por twenty_record_id; ahora la clave es
-  // (objeto, registro). Se detecta por su SQL en lugar de por un número de versión: si no
-  // menciona la columna nueva, es el viejo y hay que rehacerlo.
+  // El índice ha crecido dos veces: primero era único solo por twenty_record_id, luego por
+  // (objeto, registro) y ahora por (objeto, registro, formato). Se detecta por su SQL en
+  // lugar de por un número de versión: si no menciona la última columna añadida, está
+  // desfasado y hay que rehacerlo. Las filas ya guardadas tienen las columnas nuevas a NULL
+  // y los COALESCE las tratan como lo que son — noticias, y posts.
   const idx = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_designs_twenty_record'")
     .get() as { sql: string | null } | undefined;
-  if (idx && !(idx.sql ?? "").includes("twenty_object_type")) {
+  if (idx && !(idx.sql ?? "").includes("publication_format")) {
     db.exec("DROP INDEX idx_designs_twenty_record");
     db.exec(
       "CREATE UNIQUE INDEX idx_designs_twenty_record " +
-        "ON designs(COALESCE(twenty_object_type, 'news'), twenty_record_id) " +
+        "ON designs(COALESCE(twenty_object_type, 'news'), twenty_record_id, COALESCE(publication_format, 'post')) " +
         "WHERE twenty_record_id IS NOT NULL"
     );
   }

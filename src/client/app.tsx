@@ -7,7 +7,7 @@ import { Home } from "./components/home";
 import { useEffect, useRef } from "preact/hooks";
 
 export function App() {
-  const { path, navigate, designId, recordId, objectType } = useRouter();
+  const { path, navigate, designId, recordId, objectType, publicationFormat } = useRouter();
   const canvasState = useCanvasState();
   const designState = useDesigns(canvasState.getCanvasJSONForPage, canvasState.getCanvasSize);
   const openedRecordIdRef = useRef<string | null>(null);
@@ -21,19 +21,21 @@ export function App() {
     }
   }, [designId, designState.loading]);
 
-  // Entry point from Twenty: /edit?recordId=<id>&objectType=news|event. Opens (or
-  // resumes) the design linked to that record and navigates into the editor. The guard
-  // ref keys on the pair, not just the id: the same uuid could in theory come from either
-  // object, and they're different drafts.
+  // Entry point from Twenty: /edit?recordId=<id>&objectType=news|event&format=post|story.
+  // Opens (or resumes) the design linked to that record and navigates into the editor. The
+  // guard ref keys on the whole triple, not just the id: the same uuid could in theory come
+  // from either object, and each record has a separate draft per format. Without the format
+  // in the key, going from the post link to the story one in the same session would open
+  // nothing — the ref would have already seen that pair.
   useEffect(() => {
     if (!recordId || designId || designState.loading) return;
-    const key = `${objectType}/${recordId}`;
+    const key = `${objectType}/${recordId}/${publicationFormat}`;
     if (openedRecordIdRef.current === key) return;
     openedRecordIdRef.current = key;
-    designState.openFromTwentyRecord(recordId, objectType).then((id) => {
+    designState.openFromTwentyRecord(recordId, objectType, publicationFormat).then((id) => {
       if (id) navigate(`/design/${id}`);
     });
-  }, [recordId, objectType, designId, designState.loading]);
+  }, [recordId, objectType, publicationFormat, designId, designState.loading]);
 
   // Preloading the source image (and, on a blank page, the default title heading) from
   // Twenty now happens in page-canvas.tsx, right after each page's own canvas finishes

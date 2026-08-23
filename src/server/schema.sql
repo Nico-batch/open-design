@@ -7,16 +7,22 @@ CREATE TABLE IF NOT EXISTS designs (
   thumbnail_url TEXT,
   twenty_record_id TEXT,
   twenty_object_type TEXT,
+  publication_format TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- Un diseño por registro de Twenty, pero la clave es (objeto, registro): el mismo editor
--- sirve a varios objetos del CRM (News, Events) y la unicidad tiene que ser por par, no
--- solo por id. COALESCE porque los diseños creados antes del soporte multi-objeto tienen
--- el tipo a NULL y son, por definición, de News.
+-- La identidad de un borrador es la terna (objeto, registro, formato), no el id del
+-- registro suelto: el mismo editor sirve a varios objetos del CRM (News, Events) y de cada
+-- registro se maquetan dos piezas independientes, el post y la story. Los dos COALESCE son
+-- para los diseños anteriores a cada uno de esos dos cambios, que tienen la columna a NULL:
+-- sin tipo son de News, y sin formato son posts.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_designs_twenty_record
-  ON designs(COALESCE(twenty_object_type, 'news'), twenty_record_id)
+  ON designs(
+    COALESCE(twenty_object_type, 'news'),
+    twenty_record_id,
+    COALESCE(publication_format, 'post')
+  )
   WHERE twenty_record_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS templates (

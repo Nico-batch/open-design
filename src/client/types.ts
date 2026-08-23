@@ -9,6 +9,11 @@ export interface Design {
   /** "news" | "event" — null en diseños creados antes del soporte multi-objeto (= news).
    *  Se normaliza con coerceTwentyObjectType (lib/twenty.ts) antes de usarlo. */
   twenty_object_type: string | null;
+  /** "post" | "story" — qué pieza del registro es este borrador. Lo declara el enlace de la
+   *  ficha de Twenty (`?format=`) y decide a qué campo del CRM va la imagen exportada. Null
+   *  en diseños creados antes de la distinción (= post); se normaliza con
+   *  coercePublicationFormat (lib/twenty.ts) antes de usarlo. */
+  publication_format: string | null;
   created_at: string;
   updated_at: string;
 }
