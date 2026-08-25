@@ -4,6 +4,42 @@
 > del código, con los puntos exactos que tocaremos en las fases siguientes y los hallazgos
 > de seguridad/arquitectura encontrados hasta ahora.
 
+## Lo que no es tuyo
+
+Contexto compartido de los tres proyectos en `../CLAUDE.md`; el sistema completo
+—CRM, n8n, redes y contratos— en `../DOCUMENTACION.md`.
+
+Este repositorio es **el editor de imágenes**. Produce arte y lo sirve por URL.
+No publica, no modera y no reparte.
+
+- **n8n** — la ingesta, la cola horaria y la publicación en Instagram y Facebook.
+  Este editor no llama a n8n: n8n le llama a él, o descarga de su `/api/uploads/`.
+- **Twenty CRM** — la moderación y la fuente de verdad editorial.
+- **La app editorial** (`faro-redaccion`) — la sustituta de Twenty, en
+  construcción, en su propio repositorio.
+- **WordPress y el tema hijo** (`../web/`) — el sitio público y las APIs
+  `faro/v1`.
+
+Si el problema está en la ingesta, en la cola o en la publicación en redes,
+**dilo y para**. Desde aquí solo se ve el síntoma.
+
+### `GET /api/uploads/…` es público a propósito
+
+Todo lo demás exige Basic Auth; las peticiones `GET` a `/api/uploads/` (y
+`/api/health`) están exceptuadas a mano en
+[`src/server/index.ts`](src/server/index.ts) — el bloque de las líneas 66-71, con
+la excepción en la 68.
+
+**Las stories de Instagram dependen de ello.** A diferencia del post de feed, que
+re-sube la imagen a la mediateca de WordPress, el flujo de story le pasa a Meta
+directamente la URL de este servidor, y **Meta descarga el arte desde ahí**. Si
+algún día se protege este origen con Traefik o con cualquier otro middleware, las
+stories dejan de salir — y el fallo aparece en el log como un problema de red.
+
+**No es un descuido, y no se «arregla».** Si hay que cerrarlo, primero hay que
+volver a meter el arte vertical por `POST /faro/v1/imagenes`, con el rodeo que
+eso supone, y actualizar `../DOCUMENTACION.md` §4.1 en el mismo commit.
+
 ## 0. Origen
 
 Fork de [`clawnify/open-design`](https://github.com/clawnify/open-design) en
