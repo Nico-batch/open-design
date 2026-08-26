@@ -213,7 +213,11 @@ export function buildEventCopy(fields: EventFields, name: string): EventCopy {
   const lugar = [fields.direccion, fields.municipio].filter(Boolean).join(" · ") || null;
 
   return {
-    categoria: fields.categoria ? CATEGORY_LABELS[fields.categoria] ?? null : null,
+    // El fallback es el propio valor, no `null`. Twenty manda claves de enum
+    // (`CONCIERTOS_Y_MUSICA`) y las resuelve la tabla; `faro-redaccion` manda el nombre ya
+    // legible del catálogo de la web, que no son las mismas doce. Con `?? null` la categoría
+    // **desaparecía del cartel sin decir nada**, que es el peor fallo posible aquí.
+    categoria: fields.categoria ? CATEGORY_LABELS[fields.categoria] ?? fields.categoria : null,
     titulo: titleFromName(name),
     // Una única fuente, a propósito. Antes se intentaba deducir del trozo que hubiera
     // detrás del separador del nombre o de la primera frase de `descripcion`, pero eso es

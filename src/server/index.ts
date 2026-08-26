@@ -2,15 +2,14 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { query, get, run } from "./db.js";
 import { putUpload, getUpload } from "./uploads.js";
 import {
-  fetchRecord,
-  setRecordEditedImage,
+  fuente,
   isTwentyObjectType,
   type TwentyObjectType,
   isImageTarget,
   type ImageTarget,
   coercePublicationFormat,
   type PublicationFormat,
-} from "./twenty.js";
+} from "./fuentes/index.js";
 import { editorAuth } from "./auth.js";
 
 const app = new OpenAPIHono();
@@ -63,16 +62,27 @@ app.use("*", async (c, next) => {
 // secreto aleatorio largo (no una contraseña memorizable), funciona como una API key
 // entregada vía el prompt nativo de Basic Auth del navegador. El navegador la cachea por
 // origen tras el primer 401 y la reenvía sola en requests siguientes (fetch/<img>/etc).
+//
+// La excepción de `/api/uploads/` existe para que **Twenty y Meta** puedan descargar el arte
+// sin cabeceras, y solo tiene sentido donde el arte se queda en este contenedor. Con
+// `FUENTE=faro` el arte viaja a la app, que lo sirve firmado, así que aquí no hay nada que
+// nadie de fuera tenga que leer: la excepción se cierra. El navegador del operador no la
+// necesita en ningún caso — ya lleva Basic Auth.
 const requireAuth = editorAuth();
+const uploadsPublico = fuente.nombre !== "faro";
 app.use("*", async (c, next) => {
-  if (c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) return next();
+  if (uploadsPublico && c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) {
+    return next();
+  }
   if (c.req.method === "GET" && c.req.path === "/api/health") return next();
   return requireAuth(c, next);
 });
 
 // ── Health check (Fase 4 — sin auth: lo consulta el orquestador, no un operador) ──
 
-app.get("/api/health", (c) => c.json({ ok: true }, 200));
+// `fuente` va aquí porque es la única ruta sin auth y el cliente la consulta al arrancar
+// para saber cómo llamar al botón de guardar. No revela nada: es "twenty" o "faro".
+app.get("/api/health", (c) => c.json({ ok: true, fuente: fuente.nombre }, 200));
 
 // ── Schemas ──────────────────────────────────────────────────────────
 
@@ -518,7 +528,7 @@ const DEFAULT_CANVAS_SIZE: Record<
 
 async function twentyRecordResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
   try {
-    const record = await fetchRecord(objectType, id);
+    const record = await fuente.leerRegistro(objectType, id);
     if (!record) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json({
       id: record.id,
@@ -536,9 +546,8 @@ async function twentyRecordResponse(objectType: TwentyObjectType, id: string): P
 
 async function twentyImageResponse(objectType: TwentyObjectType, id: string): Promise<Response> {
   try {
-    const record = await fetchRecord(objectType, id);
-    if (!record?.imageUrl) return Response.json({ error: "Not found" }, { status: 404 });
-    const upstream = await fetch(record.imageUrl);
+    const upstream = await fuente.leerImagenOrigen(objectType, id);
+    if (!upstream) return Response.json({ error: "Not found" }, { status: 404 });
     if (!upstream.ok || !upstream.body) {
       return Response.json({ error: "Upstream fetch failed" }, { status: 502 });
     }
@@ -605,7 +614,7 @@ app.post("/api/designs/from-twenty/:type/:recordId", async (c) => {
 
   let name = "Untitled Design";
   try {
-    const record = await fetchRecord(objectType, recordId);
+    const record = await fuente.leerRegistro(objectType, recordId);
     if (record?.title) name = record.title.slice(0, 120);
   } catch {
     // best effort — fall back to the default name
@@ -668,50 +677,34 @@ app.post("/api/twenty/:type/:id/publish-image", async (c) => {
     return c.json({ error: "File too large" }, 413);
   }
 
-  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
-  if (!publicBaseUrl) {
-    console.error(`[publish-image ${objectType}/${id}] PUBLIC_BASE_URL no está definida en el entorno`);
-    return c.json({ error: "PUBLIC_BASE_URL no configurado en el servidor" }, 500);
-  }
-
   // El cliente exporta JPEG (no PNG) para este flujo — ver exportUploadBlob en
   // use-canvas.ts — pero se detecta por el mime real del blob en vez de asumirlo, por si
   // algún día cambia.
   const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
-  const ext = mime === "image/png" ? "png" : "jpg";
-  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-  let publicUrl: string;
+  let data: ArrayBuffer;
   try {
-    const data = await file.arrayBuffer();
-    const relativeUrl = await putUpload(filename, data, mime);
-    publicUrl = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
-    console.log(`[publish-image ${objectType}/${id}] guardado en disco: ${filename} → ${publicUrl}`);
+    data = await file.arrayBuffer();
   } catch (e) {
-    // Típicamente permisos del volumen (/data no escribible por el usuario no-root) o
-    // disco lleno.
-    console.error(`[publish-image ${objectType}/${id}] fallo al escribir el fichero:`, e);
-    return c.json({ error: "No se pudo guardar la imagen en el servidor" }, 500);
+    console.error(`[publish-image ${objectType}/${id}] fallo al leer los bytes:`, e);
+    return c.json({ error: "No se pudo leer la imagen enviada" }, 400);
   }
 
-  let field: string;
+  // La última fase, la que de verdad cambia entre fuentes: `twenty` escribe en su disco y
+  // manda la URL al CRM; `faro` manda los bytes a la app. Cada una registra por dentro sus
+  // propias fases (§9.10), porque fallan de formas distintas y aquí solo se ve «no se pudo».
+  let destino: { campo: string; url: string };
   try {
-    field = await setRecordEditedImage(
-      objectType,
-      id,
-      publicUrl,
-      target === "story" ? "Imagen story (Open Design)" : "Imagen editada (Open Design)",
-      target
-    );
+    destino = await fuente.guardarArte(objectType, id, data, mime, target);
   } catch (e) {
-    console.error(`[publish-image ${objectType}/${id}] fallo al actualizar Twenty:`, e);
-    return c.json({ error: e instanceof Error ? e.message : "Twenty update failed" }, 502);
+    console.error(`[publish-image ${objectType}/${id}] fallo al guardar en «${fuente.nombre}»:`, e);
+    return c.json({ error: e instanceof Error ? e.message : "No se pudo guardar el arte" }, 502);
   }
 
-  console.log(`[publish-image ${objectType}/${id}] OK → ${field}`);
+  console.log(`[publish-image ${objectType}/${id}] OK → ${destino.campo} (${destino.url})`);
   // El campo se devuelve para que el editor pueda decir dónde ha escrito: si se pidió
-  // "story" sobre un objeto que no lo tiene, aquí llega el de siempre.
-  return c.json({ url: publicUrl, field }, 200);
+  // "story" sobre un objeto de Twenty que no lo tiene, aquí llega el de siempre.
+  return c.json({ url: destino.url, field: destino.campo }, 200);
 });
 
 export default app;

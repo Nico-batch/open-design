@@ -42,7 +42,8 @@ export interface NewsFields {
 
 /**
  * Campos de un evento tal como los deja el servidor: ya normalizados, con las cadenas
- * vacías de Twenty convertidas a null (ver `blankToNull` en src/server/twenty.ts), así que
+ * vacías de Twenty convertidas a null (ver `blankToNull` en src/server/fuentes/twenty.ts),
+ * así que
  * aquí "no hay dato" es siempre `null` y nunca `""`.
  */
 export interface EventFields {

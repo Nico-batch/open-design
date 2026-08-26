@@ -1,3 +1,11 @@
+import { putUpload } from "../uploads.js";
+import type {
+  Fuente,
+  ImageTarget,
+  RegistroEditable,
+  TwentyObjectType,
+} from "./tipos.js";
+
 const TWENTY_API_URL = process.env.TWENTY_API_URL;
 const TWENTY_TOKEN = process.env.TWENTY_TOKEN;
 
@@ -49,33 +57,6 @@ async function twentyGraphQL<T>(query: string, variables: Record<string, unknown
 // NO como `event`, que no existe. Su título es `name` (String), mientras que el de News
 // es `title` (RichText, se lee el subcampo `markdown`).
 
-export const TWENTY_OBJECT_TYPES = ["news", "event"] as const;
-export type TwentyObjectType = (typeof TWENTY_OBJECT_TYPES)[number];
-
-export function isTwentyObjectType(value: unknown): value is TwentyObjectType {
-  return typeof value === "string" && (TWENTY_OBJECT_TYPES as readonly string[]).includes(value);
-}
-
-// ── Formato de publicación ──────────────────────────────────────────
-//
-// De cada registro se maquetan dos piezas distintas: el post del feed y la story vertical.
-// Cuál se está editando lo declara el enlace de la ficha (`?format=post|story`) y se guarda
-// con el diseño, así que son dos borradores independientes del mismo registro. Espejo de
-// `src/client/lib/twenty.ts`, igual que la tabla de objetos de arriba.
-
-export const PUBLICATION_FORMATS = ["post", "story"] as const;
-export type PublicationFormat = (typeof PUBLICATION_FORMATS)[number];
-
-/** Los enlaces de Twenty que ya existen apuntan a `?recordId=` sin `format`, y los diseños
- *  creados antes de esta distinción no lo tienen guardado: en ambos casos son posts. */
-export const DEFAULT_PUBLICATION_FORMAT: PublicationFormat = "post";
-
-export function coercePublicationFormat(value: unknown): PublicationFormat {
-  return typeof value === "string" && (PUBLICATION_FORMATS as readonly string[]).includes(value)
-    ? (value as PublicationFormat)
-    : DEFAULT_PUBLICATION_FORMAT;
-}
-
 interface TwentyObjectDef {
   /** Campo raíz singular de la query (`news(filter: ...)`). */
   queryField: string;
@@ -105,13 +86,6 @@ interface TwentyObjectDef {
 
 /** Campo Links por defecto donde va la imagen exportada. */
 const FEED_IMAGE_FIELD = "imagenEditada";
-
-/** A qué campo del registro va la imagen, según el formato que se haya exportado. */
-export type ImageTarget = "feed" | "story";
-
-export function isImageTarget(value: unknown): value is ImageTarget {
-  return value === "feed" || value === "story";
-}
 
 /**
  * Twenty devuelve los campos de texto vacíos como cadena vacía, no como null — verificado
@@ -175,7 +149,7 @@ const OBJECTS: Record<TwentyObjectType, TwentyObjectDef> = {
   },
 };
 
-export interface TwentyRecord {
+interface TwentyRecord {
   id: string;
   title: string | null;
   imageUrl: string | null;
@@ -186,7 +160,7 @@ export interface TwentyRecord {
 
 /** Lee el registro: su título por defecto y la URL (firmada, de corta duración) de la
  *  imagen de origen. Esa URL nunca se manda al cliente — se proxea (ver index.ts). */
-export async function fetchRecord(type: TwentyObjectType, id: string): Promise<TwentyRecord | null> {
+async function fetchRecord(type: TwentyObjectType, id: string): Promise<TwentyRecord | null> {
   const def = OBJECTS[type];
   const data = await twentyGraphQL<{
     record: {
@@ -225,7 +199,7 @@ export async function fetchRecord(type: TwentyObjectType, id: string): Promise<T
  * de fallar — el que llama recibe el nombre real y puede decirlo, que es mejor que perder
  * el trabajo por un campo que falta en el CRM.
  */
-export async function setRecordEditedImage(
+async function setRecordEditedImage(
   type: TwentyObjectType,
   id: string,
   publicUrl: string,
@@ -247,3 +221,74 @@ export async function setRecordEditedImage(
   );
   return field;
 }
+
+// ── La fuente ───────────────────────────────────────────────────────
+//
+// Lo que sale de este fichero hacia el resto del servidor. Todo lo de arriba —GraphQL, la
+// tabla OBJECTS, los nombres de los campos Links— se queda dentro.
+
+/**
+ * Dónde vive el arte en esta fuente: en el disco de este contenedor, y lo que viaja a
+ * Twenty es una URL pública apuntando aquí.
+ *
+ * Es el motivo de que `GET /api/uploads/…` esté exceptuado del Basic Auth: Twenty tiene que
+ * poder leer el enlace, y en la story **Meta descarga el arte directamente de este
+ * servidor**. Ver «`GET /api/uploads/…` es público a propósito» en CLAUDE.md.
+ */
+async function guardarEnDiscoYEnlazar(
+  tipo: TwentyObjectType,
+  id: string,
+  bytes: ArrayBuffer,
+  mime: string,
+  target: ImageTarget,
+): Promise<{ campo: string; url: string }> {
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
+  if (!publicBaseUrl) throw new Error("PUBLIC_BASE_URL no configurado en el servidor");
+
+  const ext = mime === "image/png" ? "png" : "jpg";
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+  // Las dos fases se registran por separado a propósito (§9.10): fallan de formas muy
+  // distintas —el volumen no escribible por el usuario no-root o el disco lleno de un lado,
+  // el CRM caído del otro— y colapsarlas en un solo mensaje es exactamente lo que impidió
+  // durante días saber en cuál moría.
+  let url: string;
+  try {
+    const relativeUrl = await putUpload(filename, bytes, mime);
+    url = `${publicBaseUrl.replace(/\/$/, "")}${relativeUrl}`;
+    console.log(`[twenty ${tipo}/${id}] guardado en disco: ${filename} → ${url}`);
+  } catch (e) {
+    console.error(`[twenty ${tipo}/${id}] fallo al escribir el fichero:`, e);
+    throw new Error("No se pudo guardar la imagen en el servidor");
+  }
+
+  try {
+    const campo = await setRecordEditedImage(
+      tipo,
+      id,
+      url,
+      target === "story" ? "Imagen story (Open Design)" : "Imagen editada (Open Design)",
+      target,
+    );
+    return { campo, url };
+  } catch (e) {
+    console.error(`[twenty ${tipo}/${id}] fallo al actualizar el CRM:`, e);
+    throw e;
+  }
+}
+
+export const fuenteTwenty: Fuente = {
+  nombre: "twenty",
+
+  leerRegistro: (tipo, id): Promise<RegistroEditable | null> => fetchRecord(tipo, id),
+
+  async leerImagenOrigen(tipo, id) {
+    const record = await fetchRecord(tipo, id);
+    if (!record?.imageUrl) return null;
+    // La URL ya lleva el token firmado de corta duración que devolvió Twenty; no hay
+    // cabecera que añadir.
+    return fetch(record.imageUrl);
+  },
+
+  guardarArte: guardarEnDiscoYEnlazar,
+};

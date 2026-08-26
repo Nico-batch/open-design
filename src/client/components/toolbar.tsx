@@ -13,6 +13,18 @@ import {
   Home,
 } from "lucide-preact";
 import { useEditor, CANVAS_SIZES } from "../context";
+import { useFuente } from "../lib/fuente";
+
+/**
+ * Cómo se lee, en cristiano, el destino que devuelve el servidor. Lo que no esté aquí se
+ * pinta tal cual: es preferible un nombre técnico a callarse dónde ha ido el arte.
+ */
+const ETIQUETAS_DESTINO: Record<string, string> = {
+  imagenStory: "Guardado en Imagen Story",
+  imagenEditada: "Guardado en Imagen Editada",
+  story: "Guardado como arte de story",
+  feed: "Guardado como arte de feed",
+};
 
 export function Toolbar() {
   const {
@@ -44,6 +56,7 @@ export function Toolbar() {
   const [showSizeDropdown, setShowSizeDropdown] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const fuente = useFuente();
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishOk, setPublishOk] = useState<string | null>(null);
@@ -55,14 +68,15 @@ export function Toolbar() {
       const blob = await exportUploadBlob();
       if (!blob) throw new Error("No se pudo exportar la imagen");
       const { field } = await publishToTwenty(blob);
-      // Decir a qué campo ha ido no es cosmético: con tres formatos disponibles, la
-      // diferencia entre "Imagen Editada" e "Imagen Story" es lo único que distingue una
-      // subida correcta de haber exportado el formato equivocado.
-      setPublishOk(field === "imagenStory" ? "Guardado en Imagen Story" : "Guardado en Imagen Editada");
+      // Decir dónde ha ido no es cosmético: con tres formatos disponibles, la diferencia
+      // entre una pieza y otra es lo único que distingue una subida correcta de haber
+      // exportado el formato equivocado. El nombre lo devuelve el servidor —un campo del CRM
+      // o el formato del recurso, según la fuente— y se pinta tal cual.
+      setPublishOk(field ? ETIQUETAS_DESTINO[field] ?? `Guardado en ${field}` : "Guardado");
       setTimeout(() => setPublishOk(null), 4000);
     } catch (e) {
       setPublishOk(null);
-      setPublishError(e instanceof Error ? e.message : "Error al publicar en Twenty");
+      setPublishError(e instanceof Error ? e.message : "Error al guardar el arte");
     } finally {
       setPublishing(false);
     }
@@ -245,7 +259,7 @@ export function Toolbar() {
             title="Sube la imagen exportada y actualiza el campo Imagen Editada del registro en Twenty (no publica en redes)"
           >
             {publishing ? <span class="spinner !border-white/30 !border-t-white" /> : <Send size={13} />}
-            {publishing ? "Enviando..." : "Guardar en Twenty"}
+            {publishing ? "Enviando..." : fuente === "faro" ? "Guardar en Redacción" : "Guardar en Twenty"}
           </button>
         )}
       </div>

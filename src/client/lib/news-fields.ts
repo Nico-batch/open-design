@@ -48,7 +48,10 @@ export function buildNewsCopy(
   title: string,
   dato?: { valor: string | null; unidad: string | null }
 ): NewsCopy {
-  const seccion = fields?.categoria ? SECTION_LABELS[fields.categoria] ?? null : null;
+  // Mismo motivo que en `event-fields.ts`: el valor tal cual como fallback. El chip no toma
+  // su color de la sección (sale de la variante de la plantilla), así que una sección que no
+  // esté en la tabla se pinta bien igualmente.
+  const seccion = fields?.categoria ? SECTION_LABELS[fields.categoria] ?? fields.categoria : null;
   const valor = dato?.valor?.trim() || null;
   return {
     seccion,

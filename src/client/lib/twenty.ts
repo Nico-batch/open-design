@@ -1,5 +1,6 @@
 // Objetos de Twenty a los que sirve el editor. Espejo de la tabla OBJECTS del servidor
-// (src/server/twenty.ts), que es donde viven los nombres reales de la API de GraphQL —
+// (src/server/fuentes/twenty.ts), que es donde viven los nombres reales de la API de
+// GraphQL —
 // aquí solo se necesita saber qué tipos son válidos y cuál es el de por defecto.
 
 export const TWENTY_OBJECT_TYPES = ["news", "event"] as const;

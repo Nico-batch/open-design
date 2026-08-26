@@ -96,7 +96,7 @@ export function useDesigns(
       // con el diseño: cambiar el tamaño desde el desplegable del toolbar reencuadra la
       // pieza, no la convierte en otra.
       // "feed" es el nombre que usa el servidor para el destino del post (ver ImageTarget en
-      // src/server/twenty.ts); el contrato de subida no cambia con esto.
+      // src/server/fuentes/tipos.ts); el contrato de subida no cambia con esto.
       const target =
         coercePublicationFormat(activeDesign?.publication_format) === "story" ? "story" : "feed";
       const form = new FormData();
