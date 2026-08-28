@@ -1,4 +1,4 @@
-import { fuenteFaro } from "./faro.js";
+import { fuenteDirectus } from "./directus.js";
 import { fuenteTwenty } from "./twenty.js";
 import type { Fuente } from "./tipos.js";
 
@@ -12,6 +12,6 @@ import type { Fuente } from "./tipos.js";
  * Ausente = `twenty`, que es lo que llevaba corriendo desde el principio: la instancia que ya
  * está en producción no necesita tocar nada para seguir igual.
  */
-export const fuente: Fuente = process.env.FUENTE === "faro" ? fuenteFaro : fuenteTwenty;
+export const fuente: Fuente = process.env.FUENTE === "directus" ? fuenteDirectus : fuenteTwenty;
 
 export * from "./tipos.js";

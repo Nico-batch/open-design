@@ -65,11 +65,12 @@ app.use("*", async (c, next) => {
 //
 // La excepción de `/api/uploads/` existe para que **Twenty y Meta** puedan descargar el arte
 // sin cabeceras, y solo tiene sentido donde el arte se queda en este contenedor. Con
-// `FUENTE=faro` el arte viaja a la app, que lo sirve firmado, así que aquí no hay nada que
-// nadie de fuera tenga que leer: la excepción se cierra. El navegador del operador no la
-// necesita en ningún caso — ya lleva Basic Auth.
+// `FUENTE=directus` el arte viaja a Directus Files, que lo sirve público desde la carpeta
+// `arte-publico` (ver DirectusCMS), así que aquí no hay nada que nadie de fuera tenga que
+// leer: la excepción se cierra. El navegador del operador no la necesita en ningún caso — ya
+// lleva Basic Auth.
 const requireAuth = editorAuth();
-const uploadsPublico = fuente.nombre !== "faro";
+const uploadsPublico = fuente.nombre !== "directus";
 app.use("*", async (c, next) => {
   if (uploadsPublico && c.req.method === "GET" && c.req.path.startsWith("/api/uploads/")) {
     return next();
@@ -81,7 +82,7 @@ app.use("*", async (c, next) => {
 // ── Health check (Fase 4 — sin auth: lo consulta el orquestador, no un operador) ──
 
 // `fuente` va aquí porque es la única ruta sin auth y el cliente la consulta al arrancar
-// para saber cómo llamar al botón de guardar. No revela nada: es "twenty" o "faro".
+// para saber cómo llamar al botón de guardar. No revela nada: es "twenty" o "directus".
 app.get("/api/health", (c) => c.json({ ok: true, fuente: fuente.nombre }, 200));
 
 // ── Schemas ──────────────────────────────────────────────────────────
@@ -691,8 +692,9 @@ app.post("/api/twenty/:type/:id/publish-image", async (c) => {
   }
 
   // La última fase, la que de verdad cambia entre fuentes: `twenty` escribe en su disco y
-  // manda la URL al CRM; `faro` manda los bytes a la app. Cada una registra por dentro sus
-  // propias fases (§9.10), porque fallan de formas distintas y aquí solo se ve «no se pudo».
+  // manda la URL al CRM; `directus` sube el fichero a Directus Files y enlaza el campo
+  // correspondiente de `contenidos`. Cada una registra por dentro sus propias fases, porque
+  // fallan de formas distintas y aquí solo se ve «no se pudo».
   let destino: { campo: string; url: string };
   try {
     destino = await fuente.guardarArte(objectType, id, data, mime, target);

@@ -214,9 +214,10 @@ export function buildEventCopy(fields: EventFields, name: string): EventCopy {
 
   return {
     // El fallback es el propio valor, no `null`. Twenty manda claves de enum
-    // (`CONCIERTOS_Y_MUSICA`) y las resuelve la tabla; `faro-redaccion` manda el nombre ya
-    // legible del catálogo de la web, que no son las mismas doce. Con `?? null` la categoría
-    // **desaparecía del cartel sin decir nada**, que es el peor fallo posible aquí.
+    // (`CONCIERTOS_Y_MUSICA`) y las resuelve la tabla; Directus manda el nombre ya legible
+    // del catálogo de la web (`categorias.nombre`), que no son las mismas doce claves. Con
+    // `?? null` la categoría **desaparecía del cartel sin decir nada**, que es el peor fallo
+    // posible aquí.
     categoria: fields.categoria ? CATEGORY_LABELS[fields.categoria] ?? fields.categoria : null,
     titulo: titleFromName(name),
     // Una única fuente, a propósito. Antes se intentaba deducir del trozo que hubiera

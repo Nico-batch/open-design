@@ -1,4 +1,4 @@
-# CLAUDE.md — open-design fork (editor de posts de Instagram para Twenty CRM)
+# CLAUDE.md — Open Design (editor de posts de Instagram para Twenty CRM)
 
 > Contexto completo del proyecto en [`PLAN.md`](PLAN.md). Este archivo es el mapa técnico
 > del código, con los puntos exactos que tocaremos en las fases siguientes y los hallazgos
@@ -6,7 +6,7 @@
 
 ## Lo que no es tuyo
 
-Contexto compartido de los tres proyectos en `../CLAUDE.md`; el sistema completo
+Contexto compartido de los dos proyectos en `../CLAUDE.md`; el sistema completo
 —CRM, n8n, redes y contratos— en `../DOCUMENTACION.md`.
 
 Este repositorio es **el editor de imágenes**. Produce arte y lo sirve por URL.
@@ -14,11 +14,10 @@ No publica, no modera y no reparte.
 
 - **n8n** — la ingesta, la cola horaria y la publicación en Instagram y Facebook.
   Este editor no llama a n8n: n8n le llama a él, o descarga de su `/api/uploads/`.
-- **Twenty CRM** — la moderación y la fuente de verdad editorial.
-- **La app editorial** (`faro-redaccion`) — la sustituta de Twenty, en construcción,
-  en su propio repositorio. **Este editor también le sirve a ella**, desde una segunda
-  instancia del mismo código (§12); lo que no es tuyo es su modelo de datos, su cola y
-  sus webhooks.
+- **Twenty CRM** — la moderación y la fuente de verdad editorial (hoy).
+- **Directus** (`../DirectusCMS/`) — la sustituta de Twenty, en construcción por fases.
+  **Este editor también le sirve a ella**, desde una segunda instancia del mismo código
+  (§12); lo que no es tuyo es su esquema, sus roles/permisos y sus Flows.
 - **WordPress y el tema hijo** (`../web/`) — el sitio público y las APIs
   `faro/v1`.
 
@@ -31,9 +30,10 @@ Todo lo demás exige Basic Auth; las peticiones `GET` a `/api/uploads/` (y
 `/api/health`) están exceptuadas a mano en
 [`src/server/index.ts`](src/server/index.ts), en el bloque del middleware de auth.
 
-**Solo en la instancia que sirve a Twenty.** Con `FUENTE=faro` el arte no se queda
-aquí —viaja a la app, que lo sirve firmado— y la excepción se cierra (§12.4). Lo que
-sigue describe el circuito de Twenty, que es donde esto importa.
+**Solo en la instancia que sirve a Twenty.** Con `FUENTE=directus` el arte no se
+queda aquí —vive en Directus Files, y se sirve público desde su propia carpeta
+`arte-publico`— y la excepción se cierra (§12.4). Lo que sigue describe el
+circuito de Twenty, que es donde esto importa.
 
 **Las stories de Instagram dependen de ello.** A diferencia del post de feed, que
 re-sube la imagen a la mediateca de WordPress, el flujo de story le pasa a Meta
@@ -41,9 +41,10 @@ directamente la URL de este servidor, y **Meta descarga el arte desde ahí**. Si
 algún día se protege este origen con Traefik o con cualquier otro middleware, las
 stories dejan de salir — y el fallo aparece en el log como un problema de red.
 
-**No es un descuido, y no se «arregla».** Si hay que cerrarlo, primero hay que
-volver a meter el arte vertical por `POST /faro/v1/imagenes`, con el rodeo que
-eso supone, y actualizar `../DOCUMENTACION.md` §4.1 en el mismo commit.
+**No es un descuido, y no se «arregla».** Si hay que cerrarlo con `FUENTE=twenty`
+en marcha, primero hay que volver a meter el arte vertical por
+`POST /faro/v1/imagenes`, con el rodeo que eso supone, y actualizar
+`../DOCUMENTACION.md` §4.1 en el mismo commit.
 
 ## 0. Origen
 
@@ -178,7 +179,7 @@ src/
 │   ├── fuentes/       — de dónde salen los registros y a dónde vuelve el arte (§12)
 │   │   ├── tipos.ts     — los tipos compartidos y la interfaz `Fuente`
 │   │   ├── twenty.ts    — cliente GraphQL de Twenty (ver §9)
-│   │   ├── faro.ts      — cliente HTTP de `faro-redaccion`
+│   │   ├── directus.ts  — cliente REST de Directus
 │   │   └── index.ts     — elige una con la variable `FUENTE`
 │   └── schema.sql    — DDL + seed de templates (SQL estándar, portable)
 └── client/
@@ -3098,41 +3099,42 @@ exista, la story se abre pegando el parámetro a mano en la URL.
 
 ## 12. La fuente: dos CRMs, un repositorio
 
-Desde el 26/8/2026 este editor sirve a **dos sistemas distintos**: Twenty CRM, como
-siempre, y `faro-redaccion`, la app editorial que va a sustituirlo. No hay fork ni copia
-del repo — hay una **fuente**, elegida por la variable `FUENTE`, y dos Applications de
-Dokploy construidas del mismo `master`.
+Desde la Fase 3 del proyecto Directus (28/8/2026) este editor sirve a **dos sistemas
+distintos**: Twenty CRM, como siempre, y Directus, el CMS que va a sustituirlo. No hay fork
+ni copia del repo — hay una **fuente**, elegida por la variable `FUENTE`, y dos Applications
+de Dokploy construidas del mismo `master`.
 
-El motivo de no forkear es concreto: §9.19–§9.35 son casi todo trabajo de plantilla, y es
-la parte que más se toca. Un fork la congelaría en el momento exacto en que dejó de estar
-terminada.
+El motivo de no forkear es el mismo de siempre: la mayor parte del código (plantillas,
+paneles, canvas) es agnóstica de la fuente y es la parte que más se toca. Un fork la
+congelaría en el momento exacto en que dejó de estar terminada.
 
-### 12.1 La frontera, y por qué cabía aquí
+### 12.1 La frontera
 
-`src/server/twenty.ts` ya era un adaptador con dos funciones de superficie
+`src/server/fuentes/twenty.ts` ya era un adaptador con dos funciones de superficie
 (`fetchRecord`, `setRecordEditedImage`) mientras el resto del servidor y **todo** el
-cliente eran genéricos y solo pasaban `objectType`/`format` de largo. Extraerlo fue mover
-ese fichero, no rediseñar nada.
+cliente eran genéricos y solo pasaban `objectType`/`format` de largo. Añadir una segunda
+fuente fue escribir un adaptador nuevo con la misma forma, no rediseñar nada.
 
 ```
 src/server/fuentes/
 ├── tipos.ts    — los tipos, los `coerce*` y la interfaz `Fuente`
-├── twenty.ts   — GraphQL contra el CRM + `putUpload` local (lo de siempre)
-├── faro.ts     — HTTP contra la app, con `X-Faro-Key`
-└── index.ts    — `FUENTE === "faro" ? faro : twenty`. Ausente = twenty.
+├── twenty.ts   — GraphQL contra el CRM + `putUpload` local
+├── directus.ts — REST contra Directus, autenticado con `Authorization: Bearer`
+└── index.ts    — `FUENTE === "directus" ? directus : twenty`. Ausente = twenty.
 ```
 
 ```ts
 interface Fuente {
+  readonly nombre: "twenty" | "directus";
   leerRegistro(tipo, id): Promise<RegistroEditable | null>;
   leerImagenOrigen(tipo, id): Promise<Response | null>;
   guardarArte(tipo, id, bytes, mime, target): Promise<{ campo: string; url: string }>;
 }
 ```
 
-`leerImagenOrigen` es nueva: antes `twentyImageResponse` hacía un `fetch(record.imageUrl)`
-pelado sobre la URL firmada de Twenty, y la fuente `faro` necesita mandar una cabecera. La
-fuente devuelve la `Response` cruda y la ruta sigue haciendo el streaming igual.
+`leerImagenOrigen` devuelve la respuesta cruda para que la ruta haga streaming sin
+materializar la imagen en memoria. Cada fuente autoriza a su manera: Twenty firma la URL,
+Directus exige la cabecera `Authorization: Bearer`.
 
 ### 12.2 Lo que NO cambió, y es deliberado
 
@@ -3140,23 +3142,28 @@ fuente devuelve la `Response` cruda y la ruta sigue haciendo el streaming igual.
   los borradores guardados lleva `/api/twenty/:type/:id/image` grabado dentro de su
   `canvas_json` (y los más viejos, `/api/news/:id/image`): renombrarlas dejaría sin fondo
   a todos los diseños existentes de golpe. El nombre es historia, no descripción.
-- **`objectType` sigue siendo `news`/`event`** en la URL de entrada. La fuente `faro`
-  traduce a `noticia`/`evento` por dentro. Mantener un solo vocabulario en la URL es lo
-  que evita bifurcar plantillas, `DEFAULT_CANVAS_SIZE` y los tipos del cliente.
+- **`objectType` sigue siendo `news`/`event`** en la URL de entrada. La fuente `directus`
+  traduce a `contenidos.tipo = "noticia"/"evento"` por dentro. Mantener un solo vocabulario
+  en la URL es lo que evita bifurcar plantillas, `DEFAULT_CANVAS_SIZE` y los tipos del
+  cliente.
+- **Los nombres de campo que ve el cliente son los de Twenty** (`fechaDeInicio`,
+  `todoElDia`, `municipio`...) aunque en Directus se llamen distinto (`inicio`,
+  `todo_el_dia`...): `directus.ts` traduce al construir `RegistroEditable.fields`, así que
+  `event-fields.ts` no sabe de dónde vino el registro.
 - **`schema.sql` y las tres columnas `twenty_*` de `designs`.** Cada Application tiene su
   propio SQLite, así que no hace falta ninguna columna de origen y no hubo migración.
 - Todo el editor puro: `use-canvas.ts`, las plantillas, los paneles, `page-canvas.tsx`.
 
 ### 12.3 Las dos Applications
 
-| | `opendesign.elfarodealicante.com` | `arte.elfarodealicante.com` |
+| | `opendesign.elfarodealicante.com` | (por definir en Fase 6) |
 |---|---|---|
-| `FUENTE` | `twenty` (o ausente) | `faro` |
-| Habla con | `crm.elfarodealicante.com` por GraphQL | `redaccion.elfarodealicante.com` por HTTP |
-| Escribe el arte en | su propio `/data/uploads`, y la URL en un campo Links del CRM | el volumen de la app, que crea la fila `recurso` |
+| `FUENTE` | `twenty` (o ausente) | `directus` |
+| Habla con | `crm.elfarodealicante.com` por GraphQL | `cms.elfarodealicante.com` por REST |
+| Escribe el arte en | su propio `/data/uploads`, y la URL en un campo Links del CRM | Directus Files, carpeta `arte-publico` |
 | `PUBLIC_BASE_URL` | obligatoria | **no se define** |
 | `TWENTY_API_URL` / `TWENTY_TOKEN` | obligatorias | **no se definen** |
-| `FARO_API_URL` / `FARO_API_KEY` | no aplican | obligatorias |
+| `DIRECTUS_URL` / `DIRECTUS_TOKEN` / `DIRECTUS_ARTE_PUBLICO_FOLDER` | no aplican | obligatorias |
 | `GET /api/uploads/…` público | **sí**, y hace falta (ver arriba) | **no**: se cierra |
 
 Volumen, dominio, Basic Auth y health check, cada una el suyo, según §11.
@@ -3164,15 +3171,31 @@ Volumen, dominio, Basic Auth y health check, cada una el suyo, según §11.
 ### 12.4 El agujero público, solo donde hace falta
 
 La excepción de auth sobre `GET /api/uploads/` (§«es público a propósito») existe para que
-Twenty y **Meta** puedan descargar el arte sin cabeceras. En la instancia de `faro` no hace
-falta: el arte no se queda aquí, se manda a la app, que lo sirve firmado. Así que esa
-excepción está condicionada a `FUENTE !== "faro"`. El navegador del operador no la necesita
-en ningún caso — lleva Basic Auth.
+Twenty y **Meta** puedan descargar el arte sin cabeceras. En la instancia de `directus` no
+hace falta: el arte no se queda aquí, vive en Directus Files y se sirve público desde la
+carpeta `arte-publico` (permiso del rol Public filtrado por esa carpeta, ver
+`../DirectusCMS/README.md`). Así que esa excepción está condicionada a `FUENTE !==
+"directus"`. El navegador del operador no la necesita en ningún caso — lleva Basic Auth.
 
-### 12.5 Una trampa que costaría encontrar
+### 12.5 Reemplazar el binario, no crear uno nuevo
+
+`directus.ts` distingue si el contenido ya tiene un `arte_post`/`arte_story`: si lo tiene,
+hace `PATCH /files/{uuid}` (reemplaza el binario, misma URL); si no, `POST /files` +
+`PATCH /items/contenidos/{id}` para enlazarlo. La alternativa —subir siempre un fichero
+nuevo— dejaría huérfanos los anteriores y, peor, invalidaría la URL que ya pudiera estar
+programada en una fila de `publicaciones`: si el arte se reedita después de programar la
+story, Meta tiene que poder descargar la versión buena sin que nadie toque esa fila.
+
+Probado de extremo a extremo el 28/8/2026 contra la instancia real: `leerRegistro` (noticia
+y evento, con `municipio`/`categoria` resueltos a su nombre legible), `leerImagenOrigen`,
+`guardarArte` creando el primer arte, reemplazándolo, y creando la story aparte; y el acceso
+público sin token a las dos URLs resultantes.
+
+### 12.6 Una trampa que costaría encontrar
 
 `CATEGORY_LABELS` (`src/client/lib/event-fields.ts`) traducía la clave del enum de Twenty a
 la etiqueta del cartel, y una clave desconocida daba `null`: **la categoría desaparecía del
-diseño sin decir nada**. Las categorías de evento de `faro-redaccion` salen del catálogo de
-la web y no son esas claves. Ahora el fallback es el propio valor recibido: Twenty sigue
-resolviendo por la tabla, la app manda el nombre ya legible y se pinta tal cual.
+diseño sin decir nada**. Las categorías de evento de Directus salen de `categorias.nombre`
+(sincronizado desde el catálogo de la web) y no son esas claves. El fallback es el propio
+valor recibido: Twenty sigue resolviendo por la tabla, Directus manda el nombre ya legible y
+se pinta tal cual.

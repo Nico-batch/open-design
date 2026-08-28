@@ -1,14 +1,15 @@
 // ── La fuente: de dónde salen los registros y a dónde vuelve el arte ─────────
 //
-// Este editor sirve a dos sistemas: Twenty CRM, que es de donde viene, y `faro-redaccion`,
-// la app editorial que va a sustituirlo. No hay fork: hay dos implementaciones de la
-// interfaz de abajo y una variable de entorno (`FUENTE`) que elige cuál corre. Todo lo
-// demás del servidor —rutas, designs, pages, uploads— y **todo** el cliente son agnósticos
-// y solo pasan `objectType`/`format` de largo.
+// Este editor sirve a dos sistemas: Twenty CRM, que es de donde viene, y Directus, el CMS
+// que va a sustituirlo. No hay fork: hay dos implementaciones de la interfaz de abajo y una
+// variable de entorno (`FUENTE`) que elige cuál corre. Todo lo demás del servidor —rutas,
+// designs, pages, uploads— y **todo** el cliente son agnósticos y solo pasan
+// `objectType`/`format` de largo.
 //
 // El vocabulario de la URL sigue siendo el de Twenty (`news`/`event`) en las dos fuentes a
-// propósito: la de `faro` lo traduce a `noticia`/`evento` por dentro. Un solo vocabulario
-// en la URL es lo que evita bifurcar plantillas, tamaños por defecto y tipos del cliente.
+// propósito: la de Directus lo traduce a `noticia`/`evento` por dentro (los valores de
+// `contenidos.tipo`). Un solo vocabulario en la URL es lo que evita bifurcar plantillas,
+// tamaños por defecto y tipos del cliente.
 
 export const TWENTY_OBJECT_TYPES = ["news", "event"] as const;
 export type TwentyObjectType = (typeof TWENTY_OBJECT_TYPES)[number];
@@ -58,7 +59,7 @@ export interface RegistroEditable {
 
 export interface Fuente {
   /** Cómo se llama, para el health check y para lo que el operador ve en el toolbar. */
-  readonly nombre: "twenty" | "faro";
+  readonly nombre: "twenty" | "directus";
 
   leerRegistro(tipo: TwentyObjectType, id: string): Promise<RegistroEditable | null>;
 
@@ -67,8 +68,8 @@ export interface Fuente {
    *
    * Devuelve la `Response` cruda para que la ruta haga el streaming sin materializar la
    * imagen en memoria. Existe como método de la fuente —y no como un `fetch` en la ruta
-   * sobre `imageUrl`— porque cada sistema autoriza a su manera: Twenty firma la URL, la app
-   * exige una cabecera.
+   * sobre `imageUrl`— porque cada sistema autoriza a su manera: Twenty firma la URL,
+   * Directus exige una cabecera.
    */
   leerImagenOrigen(tipo: TwentyObjectType, id: string): Promise<Response | null>;
 
@@ -76,7 +77,7 @@ export interface Fuente {
    * Deja el arte exportado donde corresponda y devuelve **dónde** ha quedado.
    *
    * `campo` es lo que el editor le enseña al operador: el nombre del campo del CRM en la
-   * fuente `twenty`, el formato del recurso en la de `faro`.
+   * fuente `twenty`, el campo de `contenidos` (`arte_post`/`arte_story`) en la de `directus`.
    */
   guardarArte(
     tipo: TwentyObjectType,

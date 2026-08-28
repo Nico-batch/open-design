@@ -22,8 +22,8 @@ import { useFuente } from "../lib/fuente";
 const ETIQUETAS_DESTINO: Record<string, string> = {
   imagenStory: "Guardado en Imagen Story",
   imagenEditada: "Guardado en Imagen Editada",
-  story: "Guardado como arte de story",
-  feed: "Guardado como arte de feed",
+  arte_post: "Guardado en Directus (arte_post)",
+  arte_story: "Guardado en Directus (arte_story)",
 };
 
 export function Toolbar() {
@@ -71,7 +71,7 @@ export function Toolbar() {
       // Decir dónde ha ido no es cosmético: con tres formatos disponibles, la diferencia
       // entre una pieza y otra es lo único que distingue una subida correcta de haber
       // exportado el formato equivocado. El nombre lo devuelve el servidor —un campo del CRM
-      // o el formato del recurso, según la fuente— y se pinta tal cual.
+      // o el campo de `contenidos`, según la fuente— y se pinta tal cual.
       setPublishOk(field ? ETIQUETAS_DESTINO[field] ?? `Guardado en ${field}` : "Guardado");
       setTimeout(() => setPublishOk(null), 4000);
     } catch (e) {
@@ -259,7 +259,7 @@ export function Toolbar() {
             title="Sube la imagen exportada y actualiza el campo Imagen Editada del registro en Twenty (no publica en redes)"
           >
             {publishing ? <span class="spinner !border-white/30 !border-t-white" /> : <Send size={13} />}
-            {publishing ? "Enviando..." : fuente === "faro" ? "Guardar en Redacción" : "Guardar en Twenty"}
+            {publishing ? "Enviando..." : fuente === "directus" ? "Guardar en Directus" : "Guardar en Twenty"}
           </button>
         )}
       </div>
