@@ -15,9 +15,12 @@ No publica, no modera y no reparte.
 - **n8n** — la ingesta, la cola horaria y la publicación en Instagram y Facebook.
   Este editor no llama a n8n: n8n le llama a él, o descarga de su `/api/uploads/`.
 - **Twenty CRM** — la moderación y la fuente de verdad editorial (hoy).
-- **Directus** (`../DirectusCMS/`) — la sustituta de Twenty, en construcción por fases.
-  **Este editor también le sirve a ella**, desde una segunda instancia del mismo código
-  (§12); lo que no es tuyo es su esquema, sus roles/permisos y sus Flows.
+- **Directus** (`../DirectusCMS/`) — se evaluó como sustituta de Twenty y se
+  **descartó el 30/8/2026** (motivo en `../contexto-proyecto.md`). El editor
+  conserva la capacidad de servirle (§12) porque el código no se tocó al
+  descartar la migración, pero **hoy solo hay una instancia desplegada y sirve
+  a Twenty** (`FUENTE=twenty`). Lo que no es tuyo, si algún día se retoma, es
+  su esquema, sus roles/permisos y sus Flows.
 - **WordPress y el tema hijo** (`../web/`) — el sitio público y las APIs
   `faro/v1`.
 
@@ -3097,16 +3100,26 @@ exista, la story se abre pegando el parámetro a mano en la URL.
 
 ---
 
-## 12. La fuente: dos CRMs, un repositorio
+## 12. La fuente: dos CRMs, un repositorio (🗄️ capacidad archivada, 30/8/2026)
 
-Desde la Fase 3 del proyecto Directus (28/8/2026) este editor sirve a **dos sistemas
-distintos**: Twenty CRM, como siempre, y Directus, el CMS que va a sustituirlo. No hay fork
-ni copia del repo — hay una **fuente**, elegida por la variable `FUENTE`, y dos Applications
-de Dokploy construidas del mismo `master`.
+> **La migración a Directus se evaluó y se descartó el 30/8/2026** — Twenty sigue
+> siendo la fuente de verdad editorial; el motivo está en
+> `../contexto-proyecto.md`. Lo que sigue describe una capacidad que **el código
+> todavía tiene pero que no está desplegada**: solo existe
+> `opendesign.elfarodealicante.com` y corre con `FUENTE=twenty`. No se revirtió
+> el código porque no hacía falta — el adaptador `directus.ts` no interfiere con
+> el circuito de Twenty mientras nadie fije `FUENTE=directus`. Se deja tal cual
+> por si algún día se retoma; hasta entonces, es historia, no arquitectura activa.
 
-El motivo de no forkear es el mismo de siempre: la mayor parte del código (plantillas,
+Durante la Fase 3 del proyecto Directus (28/8/2026) este editor llegó a servir a **dos
+sistemas distintos**: Twenty CRM, como siempre, y Directus, el CMS que iba a sustituirlo. No
+hubo fork ni copia del repo — hay una **fuente**, elegida por la variable `FUENTE`, y estaba
+previsto construir una segunda Application de Dokploy del mismo `master` (§12.3); esa segunda
+Application nunca se desplegó.
+
+El motivo de no forkear fue el mismo de siempre: la mayor parte del código (plantillas,
 paneles, canvas) es agnóstica de la fuente y es la parte que más se toca. Un fork la
-congelaría en el momento exacto en que dejó de estar terminada.
+habría congelado en el momento exacto en que dejó de estar terminada.
 
 ### 12.1 La frontera
 
@@ -3154,9 +3167,9 @@ Directus exige la cabecera `Authorization: Bearer`.
   propio SQLite, así que no hace falta ninguna columna de origen y no hubo migración.
 - Todo el editor puro: `use-canvas.ts`, las plantillas, los paneles, `page-canvas.tsx`.
 
-### 12.3 Las dos Applications
+### 12.3 Las dos Applications (la segunda nunca llegó a existir)
 
-| | `opendesign.elfarodealicante.com` | (por definir en Fase 6) |
+| | `opendesign.elfarodealicante.com` | (planeada, sin desplegar — proyecto descartado) |
 |---|---|---|
 | `FUENTE` | `twenty` (o ausente) | `directus` |
 | Habla con | `crm.elfarodealicante.com` por GraphQL | `cms.elfarodealicante.com` por REST |
@@ -3166,7 +3179,10 @@ Directus exige la cabecera `Authorization: Bearer`.
 | `DIRECTUS_URL` / `DIRECTUS_TOKEN` / `DIRECTUS_ARTE_PUBLICO_FOLDER` | no aplican | obligatorias |
 | `GET /api/uploads/…` público | **sí**, y hace falta (ver arriba) | **no**: se cierra |
 
-Volumen, dominio, Basic Auth y health check, cada una el suyo, según §11.
+Volumen, dominio, Basic Auth y health check, cada una el suyo, según §11 — **solo aplica a
+la columna de Twenty**, la única que existió. Entre el 29 y el 30/8 hubo, por un rato,
+solo una Application con `FUENTE=directus` reutilizando el mismo servicio (no una segunda
+Application nueva); ya se revirtió a `twenty` (`DOCUMENTACION.md` §5.4).
 
 ### 12.4 El agujero público, solo donde hace falta
 

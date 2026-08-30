@@ -34,9 +34,15 @@ pnpm run start
 
 ## Integración con Twenty y Directus
 
-Este editor sirve a dos fuentes editoriales, elegidas por la variable `FUENTE`
-(`twenty` por defecto, o `directus`) — ver `.env.example` y `CLAUDE.md` §12. La
-entrada habitual es la misma en las dos:
+> **Directus se evaluó como sustituta de Twenty y se descartó el 30/8/2026**
+> (motivo en `../contexto-proyecto.md`). Twenty sigue siendo la fuente de verdad
+> editorial y la única instancia desplegada de este editor corre con
+> `FUENTE=twenty`. El soporte para `FUENTE=directus` se conserva en el código
+> —no estorba al circuito de Twenty— por si algún día se retoma.
+
+Este editor puede servir a dos fuentes editoriales, elegidas por la variable
+`FUENTE` (`twenty` por defecto, o `directus`) — ver `.env.example` y
+`CLAUDE.md` §12. La entrada habitual es la misma en las dos:
 
 ```text
 /edit?recordId=<id>&objectType=news|event&format=post|story
