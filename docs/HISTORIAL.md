@@ -29,10 +29,10 @@ reemplazó esa capa por completo. Estado actual:
 
 - **`src/server/db.ts`** — usa **`node:sqlite`** (el módulo SQLite nativo incluido en
   Node.js, sin dependencias externas ni compilación nativa) contra un fichero `data.db` en
-  la raíz del repo. Al arrancar ejecuta [`schema.sql`](src/server/schema.sql) completo (es
+  la raíz del repo. Al arrancar ejecuta [`schema.sql`](../src/server/schema.sql) completo (es
   idempotente: `CREATE TABLE IF NOT EXISTS` + `INSERT OR IGNORE`), así que crea/actualiza el
   esquema solo. Expone `query/get/run(sql, params)` — misma firma que antes, así que
-  [`src/server/index.ts`](src/server/index.ts) no necesitó cambios en sus queries.
+  [`src/server/index.ts`](../src/server/index.ts) no necesitó cambios en sus queries.
 - **`src/server/index.ts`** — usa `OpenAPIHono` de `@hono/zod-openapi` **directamente**
   (antes: `createApp` de `@clawnify/app`, que era solo un envoltorio fino sobre esto mismo
   más un middleware `initDB(c.env)` atado a bindings de Cloudflare). Las rutas no cambiaron.
@@ -122,7 +122,7 @@ pnpm run dev
 ```
 
 - Arranca `vite` (front, `:5173`) y `tsx src/server/serve.ts` (API, `:8787`) en paralelo vía
-  `concurrently`. Vite proxea `/api/*` a `:8787` ([`vite.config.ts`](vite.config.ts)).
+  `concurrently`. Vite proxea `/api/*` a `:8787` ([`vite.config.ts`](../vite.config.ts)).
 - **Verificado end-to-end** (Fase 1.0): `GET/POST /api/designs`, `GET /api/templates`
   responden con datos reales desde `data.db`; el front en `:5173` carga y su proxy `/api`
   llega al servidor Node correctamente.
@@ -203,13 +203,13 @@ Dockerfile, .dockerignore   — build multi-stage para Dokploy (ver §11)
 
 | Tarea del plan | Estado / dónde vive |
 |---|---|
-| Presets de tamaño IG (1080×1080, 1080×1350, 1080×1920) | Hecho — [`src/client/context.tsx`](src/client/context.tsx) `CANVAS_SIZES`. Las 4 medidas LinkedIn se quitaron. |
-| Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.png`, faro blanco, fondo transparente) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica; el archivo debe tener canal alfa real (RGBA), un JPG opaco se ve como un cuadro sólido encima del fondo. |
+| Presets de tamaño IG (1080×1080, 1080×1350, 1080×1920) | Hecho — [`src/client/context.tsx`](../src/client/context.tsx) `CANVAS_SIZES`. Las 4 medidas LinkedIn se quitaron. |
+| Logo fijo arriba-derecha | Hecho — [`src/client/lib/logo.ts`](../src/client/lib/logo.ts) (`applyLogoToCanvas`/`withoutLogo`/`isLogoObject`). Capa `fabric.FabricImage` bloqueada (`selectable:false, evented:false, lockMovementX/Y:true`), marcada con `_isLogo`, recolocada en `setCanvasSize`/`loadTemplate`/undo-redo, **excluida** de todo lo que se persiste (save, historial) vía `withoutLogo`, e **incluida** en el export porque `exportPNG` lee el canvas en vivo. Usa el logo real de marca (`public/logo.png`, faro blanco, fondo transparente) — para cambiarlo, solo sustituir el archivo/`LOGO_URL` en `logo.ts`, no hay que tocar lógica; el archivo debe tener canal alfa real (RGBA), un JPG opaco se ve como un cuadro sólido encima del fondo. |
 | Negrita en selección (estilos por carácter) | Hecho, y **generalizado en §9.21** a color, tamaño, tipografía, cursiva, subrayado y contorno. `toggleBold` conserva su comportamiento (aplica al rango seleccionado si el `Textbox` está en edición, al cuadro entero si no) pero ahora escribe a través de `applyTextStyle`, que es el único punto por el que pasa el formato de texto. |
-| Fuentes autoalojadas | Hecho — `public/fonts/<Familia>/<peso>.woff2` (36 archivos, solo subset *latin*, cubre acentos/ñ del español) + [`src/client/fonts.css`](src/client/fonts.css) (`@font-face` generado, importado desde `main.tsx`). Se quitó `WebFont.load` de `app.tsx`, el `<link>` de Google Fonts de `index.html`, y la dependencia `webfontloader`. |
+| Fuentes autoalojadas | Hecho — `public/fonts/<Familia>/<peso>.woff2` (36 archivos, solo subset *latin*, cubre acentos/ñ del español) + [`src/client/fonts.css`](../src/client/fonts.css) (`@font-face` generado, importado desde `main.tsx`). Se quitó `WebFont.load` de `app.tsx`, el `<link>` de Google Fonts de `index.html`, y la dependencia `webfontloader`. |
 | Encaje imagen origen (cover/contain) | Hecho — `fitBackgroundImage` en `use-canvas.ts`, con `setBackground(type, value, fit)` y `setBackgroundImageFit(fit)` para cambiar el encaje sin re-subir. UI: dos botones Cover/Contain en `left-sidebar.tsx` (sección Bg). El color de fondo del canvas ya sirve de "letterbox" para `contain`. Además el fondo se puede **arrastrar y redimensionar a mano** (§9.12); Cover/Contain hacen de reset. |
-| Export PNG (cliente, 2x) | Sin cambios de fondo — sigue en [`use-canvas.ts`](src/client/hooks/use-canvas.ts) `exportPNG`, `multiplier: 2`. Pendiente para Fase 2: exponer el `dataURL`/blob en vez de forzar `<a download>`, para el flujo con Twenty/n8n. |
-| Quitar plantillas/tamaños LinkedIn | Hecho — seed de `templates` vaciado en [`schema.sql`](src/server/schema.sql) (las 6 plantillas `category: 'linkedin'` fuera). `templates` devuelve `[]`; `home.tsx` ya maneja ese caso (sección oculta si `templates.length === 0`). No había librería de stickers/SVG separada que quitar. |
+| Export PNG (cliente, 2x) | Sin cambios de fondo — sigue en [`use-canvas.ts`](../src/client/hooks/use-canvas.ts) `exportPNG`, `multiplier: 2`. Pendiente para Fase 2: exponer el `dataURL`/blob en vez de forzar `<a download>`, para el flujo con Twenty/n8n. |
+| Quitar plantillas/tamaños LinkedIn | Hecho — seed de `templates` vaciado en [`schema.sql`](../src/server/schema.sql) (las 6 plantillas `category: 'linkedin'` fuera). `templates` devuelve `[]`; `home.tsx` ya maneja ese caso (sección oculta si `templates.length === 0`). No había librería de stickers/SVG separada que quitar. |
 
 ### 4.1 Bug preexistente encontrado y arreglado durante la verificación
 
@@ -217,7 +217,7 @@ Al probar el editor real en navegador (no solo `tsc`/build) aparecieron dos prob
 ninguno estaba en el plan, los dos bloqueaban el flujo básico de crear-un-diseño-y-editar:
 
 1. **Diseño nuevo se abría sin páginas.** `createDesign`/`createFromTemplate` en
-   [`use-designs.ts`](src/client/hooks/use-designs.ts) seteaban `activeDesign` con la
+   [`use-designs.ts`](../src/client/hooks/use-designs.ts) seteaban `activeDesign` con la
    respuesta del `POST` (que no trae `pages`), y como el `id` ya coincidía, el efecto que
    dispara `loadDesign` en `app.tsx` nunca se ejecutaba — el diseño se abría con `pages: []`
    y ninguna página visible hasta recargar. Arreglado: ambas funciones ahora hacen un
@@ -960,7 +960,7 @@ Medido directamente sobre el bitmap filtrado, con imágenes sintéticas de vario
 | 2000×4600 | fila 4096 | recorta por abajo |
 
 **Arreglo: reducir el bitmap de origen a 4096 px de lado**
-(`downscaleOversizedSource` en [`lib/background.ts`](src/client/lib/background.ts)). Se
+(`downscaleOversizedSource` en [`lib/background.ts`](../src/client/lib/background.ts)). Se
 descartó subir `textureSize` (el lienzo WebGL es `textureSize²`: pasarlo a 8192 son 268 MB
 de VRAM, y aun así no garantiza nada — el máximo depende de la GPU) y también desactivar
 `enableGLFiltering` (el blur en 2D son ~30 muestras por píxel y dos pasadas en JS: sobre 18
@@ -1014,10 +1014,10 @@ misma mecánica: campo Files **Imagen** como foto de origen y campo Links **Imag
 como destino del resultado. Lo único que cambia entre objetos son los nombres de la API de
 GraphQL y de dónde sale el título por defecto (y, desde §9.26, qué campos extra se piden y
 cómo se leen), y eso vive en una sola tabla
-(`OBJECTS` en [`src/server/twenty.ts`](src/server/twenty.ts)); todo lo demás — rutas,
+(`OBJECTS` en [`src/server/twenty.ts`](../src/server/fuentes/twenty.ts)); todo lo demás — rutas,
 cliente, base de datos — es genérico y solo pasa el tipo por parámetro. Añadir un tercer
 objeto es una entrada más en esa tabla y una en la lista del cliente
-([`src/client/lib/twenty.ts`](src/client/lib/twenty.ts)).
+([`src/client/lib/twenty.ts`](../src/client/lib/twenty.ts)).
 
 **Nombres reales, confirmados por introspección contra la instancia (no supuestos):**
 
@@ -1038,7 +1038,7 @@ justo el tipo de cosa que no se puede adivinar: se introspeccionó el esquema en
 **Cómo viaja el tipo, de punta a punta:**
 
 - **URL de entrada**: `?objectType=news|event` junto a `?recordId=`
-  ([`use-router.ts`](src/client/hooks/use-router.ts)). **Es opcional y por defecto vale
+  ([`use-router.ts`](../src/client/hooks/use-router.ts)). **Es opcional y por defecto vale
   `news`**, para que los enlaces que ya existen en las fichas de noticias sigan
   funcionando sin tocarlos.
 - **Base de datos**: columna nueva `designs.twenty_object_type`, y el índice único pasa de
@@ -1052,7 +1052,7 @@ justo el tipo de cosa que no se puede adivinar: se introspeccionó el esquema en
   el operador puede haber llegado al borrador desde la galería y no desde el enlace.
 
 **Dos migraciones que `schema.sql` NO puede hacer solo**, y por eso viven en
-[`db.ts`](src/server/db.ts): el fichero es idempotente (`CREATE ... IF NOT EXISTS`), lo que
+[`db.ts`](../src/server/db.ts): el fichero es idempotente (`CREATE ... IF NOT EXISTS`), lo que
 sirve para crear la base desde cero pero no para *cambiar* algo ya existente — una columna
 nueva no aparece en una tabla ya creada, y un índice que cambia de definición **se ignora en
 silencio** porque su nombre ya está ocupado. Al arrancar se añade la columna si falta y se
@@ -1086,14 +1086,14 @@ trae banderas de país, así que `🇪🇸` salía como las letras **"ES"** (rep
 antes del cambio).
 
 **Fuente autoalojada.** `public/fonts/Noto-Color-Emoji/{0..9}.woff2` (COLRv1, ~2 MB en
-total) + sus `@font-face` en [`fonts.css`](src/client/fonts.css), **troceados por
+total) + sus `@font-face` en [`fonts.css`](../src/client/fonts.css), **troceados por
 `unicode-range`** igual que los sirve Google Fonts: el navegador solo descarga el trozo del
 emoji que se use. No se declara ninguna familia del sistema como respaldo — el objetivo es
 justamente que el diseño se vea igual en cualquier equipo.
 
 **Un solo punto de enganche en Fabric.** `_getFontDeclaration` es donde Fabric construye la
 cadena `ctx.font`, y **usa la misma para medir y para pintar**; añadir ahí la familia de
-emoji (`installEmojiFontFallback` en [`lib/fonts.ts`](src/client/lib/fonts.ts), llamado una
+emoji (`installEmojiFontFallback` en [`lib/fonts.ts`](../src/client/lib/fonts.ts), llamado una
 vez desde `main.tsx`) mantiene las dos en sintonía y deja intacto el `fontFamily` del
 objeto — que es lo que alimenta el desplegable de fuentes y lo que se serializa en
 `canvas_json`. Tocar `fontFamily` habría contaminado ambos.
@@ -1105,7 +1105,7 @@ la carga (pasándole el texto, para que `unicode-range` acote la descarga) y lim
 de anchos; un listener de `text:changed` cubre el caso de escribirlo **en mitad de la
 edición**, que es el único momento en que una fuente llega a mitad de faena.
 
-**Selector de emojis** ([`emoji-picker.tsx`](src/client/components/emoji-picker.tsx), en el
+**Selector de emojis** ([`emoji-picker.tsx`](../src/client/components/emoji-picker.tsx), en el
 panel derecho, sección Text): lista curada por categorías, no el catálogo Unicode entero —
 esto es para titulares, no un teclado de chat. Inserta **en el cursor** si el cuadro está en
 edición (y si no, al final). Dos detalles que lo hacen usable:
@@ -1138,9 +1138,9 @@ Ahora respetan la selección **color, tamaño, tipografía, cursiva, subrayado y
 Siguen siendo del cuadro entero **alineación, interlineado, espaciado y opacidad**, y no por
 decisión de diseño sino porque Fabric no puede guardarlas por carácter (ver abajo).
 
-**Dónde vive.** [`src/client/lib/text-styles.ts`](src/client/lib/text-styles.ts) (nuevo)
+**Dónde vive.** [`src/client/lib/text-styles.ts`](../src/client/lib/text-styles.ts) (nuevo)
 concentra el conocimiento de Fabric; `applyTextStyle` en
-[`use-canvas.ts`](src/client/hooks/use-canvas.ts) es **el único punto** por el que pasa el
+[`use-canvas.ts`](../src/client/hooks/use-canvas.ts) es **el único punto** por el que pasa el
 formato de texto, y el panel solo decide qué propiedad manda. `toggleBold` se reescribió
 encima de él: lo único que le queda propio es decidir hacia qué lado alternar.
 
@@ -1242,7 +1242,7 @@ ampliada eso cae muy por debajo del pliegue —medido: `top: 1364px` en una vent
 así que el navegador desplaza el elemento enfocado hasta hacerlo visible.
 
 Lo que despista es que `html, body, #app` **ya tienen `overflow: hidden`**
-([`styles.css`](src/client/styles.css)). Eso no lo impide: `overflow: hidden` quita la barra
+([`styles.css`](../src/client/styles.css)). Eso no lo impide: `overflow: hidden` quita la barra
 y el desplazamiento por parte del usuario, pero el contenedor **sigue siendo desplazable por
 código**, y eso incluye el "llevar el foco a la vista" del navegador. De ahí que se moviera
 sin que apareciera ninguna barra y que asomara el fondo de la página como una banda negra.
@@ -1252,7 +1252,7 @@ sin que apareciera ninguna barra y que asomara el fondo de la página como una b
 desplazamiento de 420px. Lo que cambió es la frecuencia — seleccionar palabras pasó a ser
 algo que se hace todo el rato, así que un fallo latente se volvió cotidiano.
 
-**Arreglo:** `installTextareaHost()` en [`lib/workspace.ts`](src/client/lib/workspace.ts),
+**Arreglo:** `installTextareaHost()` en [`lib/workspace.ts`](../src/client/lib/workspace.ts),
 llamado una vez desde `main.tsx` antes de que exista ningún canvas (mismo patrón que
 `installEmojiFontFallback`, §9.20). Crea un contenedor fijo del tamaño de la ventana,
 recortado y sin eventos de puntero, y se lo pasa a Fabric por `hiddenTextareaContainer` —
@@ -1298,9 +1298,9 @@ historial (cada encendido sería un paso de deshacer), de la selección (una gu�
 que se pulse) y sobre todo **de la exportación** — `exportPNG`/`exportUploadBlob` leen el
 lienzo **en vivo**, que es justamente por lo que el logo sí sale en la imagen final (§4). Una
 guía colada dentro del JPEG que se sube a Twenty habría sido un mal día. Como hermana del
-`<canvas>` en el DOM ([`guides-overlay.tsx`](src/client/components/guides-overlay.tsx)),
+`<canvas>` en el DOM ([`guides-overlay.tsx`](../src/client/components/guides-overlay.tsx)),
 nada de eso puede pasar por construcción — **el imán en sí vive aparte, en
-[`lib/snapping.ts`](src/client/lib/snapping.ts)**, enganchado al evento `object:moving` de
+[`lib/snapping.ts`](../src/client/lib/snapping.ts)**, enganchado al evento `object:moving` de
 Fabric: mueve el objeto real en el lienzo, pero nunca toca el DOM de la guía ni al revés; lo
 único que cruza de un lado a otro es qué eje quedó enganchado, para que la línea correspondiente
 se resalte.
@@ -1335,7 +1335,7 @@ listener nuevo por objeto.
   el objeto hasta el siguiente movimiento — el comportamiento esperable, no un listener global
   de más.
 - **El historial no necesita nada nuevo**: `object:modified` ya dispara `saveHistory`
-  ([use-canvas.ts](src/client/hooks/use-canvas.ts)) y salta *después* de soltar, así que la
+  ([use-canvas.ts](../src/client/hooks/use-canvas.ts)) y salta *después* de soltar, así que la
   posición ya imantada entra sola en el `Ctrl+Z`.
 
 **Resaltado de la línea enganchada** (pedido por el usuario): mientras un eje está
@@ -1383,7 +1383,7 @@ Twenty. Sin errores de consola en ningún paso.
 Petición del usuario: «más efectos para las letras, quiero uno que añada como un contorno
 sombreado». Aclarado con vistas previas, resultó ser **sombra proyectada**; añadió además
 **resplandor**, **hueco** y **fondo del texto**. Todo vive en
-[`lib/text-effects.ts`](src/client/lib/text-effects.ts), el equivalente para la letra de lo
+[`lib/text-effects.ts`](../src/client/lib/text-effects.ts), el equivalente para la letra de lo
 que `lib/effects.ts` hace con la foto (§9.14): entre los dos cubren las dos salidas al mismo
 problema — calmar la imagen, o hacer el texto lo bastante fuerte como para que dé igual.
 
@@ -1831,7 +1831,7 @@ El diseño fija la franja en el 62 % de la altura, el titular entre 96 y 66 px y
 3 líneas. Con los titulares reales las tres condiciones no siempre caben a la vez, y el
 usuario eligió qué cede: **la franja crece hacia arriba**.
 
-`layout()` (en [`lib/news-template.ts`](src/client/lib/news-template.ts)) lo resuelve en este
+`layout()` (en [`lib/news-template.ts`](../src/client/lib/news-template.ts)) lo resuelve en este
 orden, que es lo que hace que la regla innegociable se cumpla por construcción:
 
 1. Se mide todo lo que no es el titular (chip, cifra, línea, pie) y sus separaciones.
@@ -1989,8 +1989,8 @@ persistido por la API y mirando los PNG exportados, no solo lo que se ve en pant
 
 Cubre el checklist de `PLAN-ORIGINAL.md` §5/§6 que depende solo del código de la app (no del
 despliegue — eso es Fase 4: Traefik, VPN/allowlist de IP, contenedor no-root, red de
-Dokploy). Todo lo de abajo está en [`src/server/index.ts`](src/server/index.ts) y
-[`src/server/auth.ts`](src/server/auth.ts) (nuevo), verificado con `curl` contra el
+Dokploy). Todo lo de abajo está en [`src/server/index.ts`](../src/server/index.ts) y
+[`src/server/auth.ts`](../src/server/auth.ts) (nuevo), verificado con `curl` contra el
 servidor real (no solo lectura de código).
 
 ### 10.1 Auth en toda la app (no solo `/api/*`)
@@ -2281,7 +2281,7 @@ Tres peticiones sobre lo que dejó §9.28.
 #### El formato por defecto pasa a 1080×1350
 
 `DEFAULT_CANVAS_SIZE.news` y el `POST /api/designs` del diseño en blanco (y el `DEFAULT` de
-[`schema.sql`](src/server/schema.sql), que solo importa en una base nueva). §9.28 había dejado
+[`schema.sql`](../src/server/schema.sql), que solo importa en una base nueva). §9.28 había dejado
 el cuadrado a propósito, argumentando que la plantilla no se aplica sola; el usuario prefiere
 lo contrario, y el 4:5 es el formato que más pantalla ocupa en el feed. **Solo afecta a
 diseños nuevos**: los borradores ya guardados conservan su tamaño (verificado).
@@ -2294,7 +2294,7 @@ que la fotografía se queda intacta»— pero **no** la regla que la sostenía: 
 sin filtros ni velos. Lo que se desenfoca es **una copia suya**, no ella.
 
 **La capa `glass`** (`_nwRole: "glass"`, en
-[`lib/news-template.ts`](src/client/lib/news-template.ts)) es una segunda imagen con el mismo
+[`lib/news-template.ts`](../src/client/lib/news-template.ts)) es una segunda imagen con el mismo
 bitmap, un filtro `Blur(0.3)` —el mismo valor con el que la plantilla de eventos difumina el
 fondo de su modo cartel— y un `clipPath` del tamaño exacto de la franja.
 
@@ -2307,7 +2307,7 @@ fondo de su modo cartel— y un `clipPath` del tamaño exacto de la franja.
   exactamente el error que §9.18 costó encontrar cuatro veces.
 - **`_srcUrl` es obligatorio.** Construir una `FabricImage` desde un elemento hace que
   `getSrc()` incruste el bitmap entero en base64 al serializar; el override de
-  [`background.ts`](src/client/lib/background.ts) devuelve la URL solo si esa propiedad está
+  [`background.ts`](../src/client/lib/background.ts) devuelve la URL solo si esa propiedad está
   puesta. Verificado: el `canvas_json` con plantilla son 7.791 bytes y no contiene `data:image`.
 - **`_nwRole` hay que registrarlo también en `fabric.FabricImage`**, y el orden importa:
   `background.ts` *sobrescribe* `FabricImage.customProperties` con un array literal, así que el
@@ -2341,9 +2341,9 @@ vivo; el historial y el guardado solo se escriben al soltar (`commit`).
 
 #### Muestras de color en los ocho selectores
 
-[`lib/palette.ts`](src/client/lib/palette.ts) (nuevo) concentra los colores de marca —que
+[`lib/palette.ts`](../src/client/lib/palette.ts) (nuevo) concentra los colores de marca —que
 estaban duplicados como constantes locales en las dos plantillas— y añade la lista de muestras.
-[`components/color-field.tsx`](src/client/components/color-field.tsx) (nuevo) sustituye el
+[`components/color-field.tsx`](../src/client/components/color-field.tsx) (nuevo) sustituye el
 bloque `input[type=color]` + campo hexadecimal repetido ocho veces y le cuelga la fila de
 muestras: azul noche, ámbar, crema, blanco, negro y tres colores de marcado con la saturación
 apagada del navy —rojo `#b3261e` (el que §9.28 dejó sin usar al no existir la sección
@@ -2577,7 +2577,7 @@ acumulaba un logo más por apertura. Y como esas copias eran ya imágenes anóni
 `_isBgImage`. Observado en un diseño de prueba: tres logos guardados, uno de ellos tagueado como
 fondo y **un cristal desenfocado construido a partir del logo**.
 
-Arreglo en [`logo.ts`](src/client/lib/logo.ts): `isLogoObject` reconoce la capa **también por su
+Arreglo en [`logo.ts`](../src/client/lib/logo.ts): `isLogoObject` reconoce la capa **también por su
 `src`**, no solo por la marca, y `withoutLogo`/`applyLogoToCanvas` operan sobre **todas** las que
 haya, no sobre la primera. Con eso los diseños ya afectados **se curan solos** en cuanto se
 abren: las copias sueltas se identifican, se retiran y dejan de guardarse. Verificado: el diseño
@@ -2739,7 +2739,7 @@ interfaz: seleccionar algo tapado por otra cosa (con la plantilla puesta, el cri
 fotografía entera), ocultar una capa un momento para ver lo que hay debajo, y reordenar sin
 depender del orden en que se añadieron los objetos.
 
-[`lib/layers.ts`](src/client/lib/layers.ts) tiene el modelo; el componente solo pinta.
+[`lib/layers.ts`](../src/client/lib/layers.ts) tiene el modelo; el componente solo pinta.
 
 - **Nombres antes que tipos.** Se lee primero `_nwRole` y `_tplRole`: «Titular» dice mucho más
   que «Texto» y «Desenfoque» mucho más que «Imagen» — y son justo las capas que el operador no
