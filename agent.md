@@ -1,18 +1,19 @@
-# Canva App
+# Open Design — editor de arte para El Faro
 
-A design editor for creating professional social media graphics, especially LinkedIn posts.
+Editor interno para crear las imágenes de publicaciones de Instagram de El Faro de Alicante.
+Los registros se leen de Twenty CRM y el arte terminado vuelve al campo correspondiente.
 
 ## Features
 - Fabric.js-based canvas editor with drag-and-drop
-- Pre-built LinkedIn post templates (Quote Card, Stats Highlight, Announcement, Tips List, Profile Card, Minimal Text)
-- Text editing with Google Fonts (Inter, Montserrat, Playfair Display)
+- Plantillas para noticias y eventos, con formatos de feed y story
+- Texto editable con fuentes autoalojadas
 - Image uploads and placement
-- Multiple canvas sizes (1080x1080 square, 1200x627 landscape)
+- Formatos de Instagram: 1080x1080, 1080x1350 y 1080x1920
 - Save and manage multiple designs
 
 ## When to use this template
 Use this template when the user wants to:
 - Create social media post images or graphics
-- Design LinkedIn posts, quote cards, or announcement banners
+- Crear arte para noticias y eventos de Instagram
 - Build a simple graphic design tool
 - Create branded visual content

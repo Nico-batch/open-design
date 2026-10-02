@@ -55,7 +55,7 @@ app.use("*", async (c, next) => {
 // Basic Auth en TODA la app (API + la SPA/estáticos que sirve serve.ts en producción),
 // EXCEPTO dos rutas públicas obligatorias:
 //   - GET /api/uploads/:filename — es la URL que se escribe en "Imagen Editada" de
-//     Twenty, tiene que responder sin credenciales (requisito del usuario, CLAUDE.md §9.2).
+//     Twenty, tiene que responder sin credenciales (requisito del usuario, docs/HISTORIAL.md §9.2).
 //   - GET /api/health — lo consulta el HEALTHCHECK de Docker/Dokploy, no un operador.
 // Nada más queda abierto — ni el HTML/JS de la SPA, así que no hace falta ningún
 // middleware adicional en Traefik para que esto sea seguro: EDITOR_PASSWORD es un

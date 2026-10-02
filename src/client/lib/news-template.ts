@@ -39,7 +39,7 @@ import { BRAND } from "./palette";
  */
 
 // Fabric descarta al serializar cualquier propiedad que no esté registrada, y el registro
-// tiene la trampa que documenta §9.26 de CLAUDE.md: `toObject()` serializa
+// tiene la trampa que documenta §9.26 de docs/HISTORIAL.md: `toObject()` serializa
 // `propertiesToInclude.concat(FabricObject.customProperties, this.constructor.customProperties)`,
 // de modo que registrarlo solo en la clase base **no basta** — `Rect` declara su propio array
 // (lo escribe `effects.ts`) y esa propiedad propia *tapa* la heredada. Se añade clase por

@@ -1,4 +1,4 @@
-# Node ≥ 22.5 hace falta por node:sqlite (ver CLAUDE.md §1); usamos la LTS 24, la misma
+# Node ≥ 22.5 hace falta por node:sqlite (ver docs/HISTORIAL.md §1); usamos la LTS 24, la misma
 # que en desarrollo. Nada de better-sqlite3 aquí, así que no hace falta toolchain nativo
 # (python/make/g++) en ninguna etapa.
 
@@ -13,7 +13,7 @@ RUN pnpm run build
 
 # ── Etapa 2: runtime ─────────────────────────────────────────────────────────
 # El servidor corre con tsx directamente sobre src/server/*.ts (mismo mecanismo que en
-# desarrollo, ver CLAUDE.md §2) — no hay paso de compilación propio para el backend.
+# desarrollo, ver docs/HISTORIAL.md §2) — no hay paso de compilación propio para el backend.
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
@@ -26,7 +26,7 @@ COPY --from=build /app/dist ./dist
 COPY src/server ./src/server
 
 # Usuario no-root + directorio para los volúmenes (data.db + uploads/), montados por
-# Dokploy en /data (Fase 4 — ver CLAUDE.md). DB_PATH/UPLOADS_DIR apuntan ahí en vez de a
+# Dokploy en /data (Fase 4 — ver docs/HISTORIAL.md §11). DB_PATH/UPLOADS_DIR apuntan ahí en vez de a
 # rutas dentro del código fuente.
 RUN groupadd --system editor \
   && useradd --system --gid editor --home-dir /app --no-create-home editor \

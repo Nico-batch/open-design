@@ -25,6 +25,10 @@ pnpm run dev
 La interfaz queda en `http://localhost:5173` y la API en `http://localhost:8787`.
 La configuración se carga desde `.env`; usa `.env.example` como referencia.
 
+Para trabajar en el código, empieza por [`AGENTS.md`](AGENTS.md): la frontera del
+editor, cómo se verifica y cómo se despliega. El diario técnico, decisión a
+decisión, está en [`docs/HISTORIAL.md`](docs/HISTORIAL.md).
+
 Para probar producción localmente:
 
 ```bash
@@ -42,7 +46,7 @@ pnpm run start
 
 Este editor puede servir a dos fuentes editoriales, elegidas por la variable
 `FUENTE` (`twenty` por defecto, o `directus`) — ver `.env.example` y
-`CLAUDE.md` §12. La entrada habitual es la misma en las dos:
+`docs/HISTORIAL.md` §12. La entrada habitual es la misma en las dos:
 
 ```text
 /edit?recordId=<id>&objectType=news|event&format=post|story
@@ -84,6 +88,7 @@ proxifican para evitar exponer URLs firmadas al navegador.
 src/server/       API Hono, SQLite, autenticación e integración con Twenty
 src/client/       editor Preact y componentes del lienzo
 public/fonts/     fuentes autoalojadas
+docs/             historial técnico y plan de arranque
 Dockerfile        imagen de producción para Dokploy
 ```
 
@@ -91,7 +96,8 @@ Dockerfile        imagen de producción para Dokploy
 
 Se despliega como una Application de Dokploy mediante el `Dockerfile`. Es
 necesario montar un volumen en `/data` para conservar la base SQLite y las
-imágenes subidas. La configuración detallada está en `CLAUDE.md`.
+imágenes subidas. Variables, volumen y health check en [`AGENTS.md`](AGENTS.md);
+el porqué de cada decisión del despliegue, en `docs/HISTORIAL.md` §11.
 
 ## Licencia
 

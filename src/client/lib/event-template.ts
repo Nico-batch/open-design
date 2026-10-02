@@ -18,7 +18,7 @@ import { BRAND } from "./palette";
  */
 
 // Fabric descarta al serializar cualquier propiedad que no esté registrada (§9.12 de
-// CLAUDE.md), y el registro tiene una trampa que costó un bug encontrar.
+// docs/HISTORIAL.md), y el registro tiene una trampa que costó un bug encontrar.
 //
 // `toObject()` serializa
 // `propertiesToInclude.concat(FabricObject.customProperties, this.constructor.customProperties)`.

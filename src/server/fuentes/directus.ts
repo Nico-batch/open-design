@@ -13,7 +13,7 @@ import type {
 // `noticia`/`evento` y el nombre de campo del arte según el formato.
 //
 // El contrato entero (colecciones, roles, permisos) está documentado en
-// `../DirectusCMS/README.md` y `../DirectusCMS/CLAUDE.md`, en el otro repositorio.
+// `../archivo/DirectusCMS/README.md` y `../archivo/DirectusCMS/CLAUDE.md`, en el otro repositorio.
 
 const DIRECTUS_URL = process.env.DIRECTUS_URL;
 const DIRECTUS_TOKEN = process.env.DIRECTUS_TOKEN;

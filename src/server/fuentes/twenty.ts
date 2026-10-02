@@ -233,7 +233,7 @@ async function setRecordEditedImage(
  *
  * Es el motivo de que `GET /api/uploads/…` esté exceptuado del Basic Auth: Twenty tiene que
  * poder leer el enlace, y en la story **Meta descarga el arte directamente de este
- * servidor**. Ver «`GET /api/uploads/…` es público a propósito» en CLAUDE.md.
+ * servidor**. Ver «`GET /api/uploads/…` es público a propósito» en AGENTS.md.
  */
 async function guardarEnDiscoYEnlazar(
   tipo: TwentyObjectType,

@@ -1,6 +1,11 @@
-# Plan de proyecto — Editor de imágenes para publicaciones de Instagram (fork de open-design)
+# Plan de proyecto — Editor de imágenes para publicaciones de Instagram
 
-> Documento de arranque para desarrollar con Claude Code en VS Code.
+> **El plan de arranque, conservado como registro.** Es el documento con el que
+> empezó el fork, en agosto de 2026, y las casillas no se han mantenido: casi todo
+> está hecho, y varias cosas se hicieron de otra forma —sin n8n en el editor,
+> `node:sqlite` en vez de `better-sqlite3`, Basic Auth en la app en vez de en
+> Traefik—. Qué se hizo y por qué, en [`HISTORIAL.md`](HISTORIAL.md); cómo se
+> trabaja hoy, en [`../AGENTS.md`](../AGENTS.md).
 > Base: fork de [`clawnify/open-design`](https://github.com/clawnify/open-design) (Preact + Fabric.js v6 + Tailwind + Hono + SQLite, MIT).
 
 ---
@@ -64,8 +69,8 @@ Todo lo sensible (token de Twenty, credenciales IG, publicación) queda del lado
 ## 5. Fases y tareas
 
 ### Fase 0 — Fork y baseline
-- [ ] Forkear `clawnify/open-design` y clonarlo en local.
-- [ ] `pnpm install` y arrancar (`pnpm run dev`); verificar editor en `localhost:5178` y API en `:3006`.
+- [x] Forkear `clawnify/open-design` y clonarlo en local.
+- [x] `pnpm install` y arrancar (`pnpm run dev`); interfaz en `localhost:5173` y API en `:8787`.
 - [ ] Leer y documentar en `CLAUDE.md`: estructura (`src/server`, `src/client`, `use-canvas.ts`, `context.tsx`, `schema.sql`), endpoints y modelo de datos.
 - [ ] Fijar versiones en el lockfile y correr `pnpm audit`; anotar vulnerabilidades.
 
@@ -94,7 +99,7 @@ Todo lo sensible (token de Twenty, credenciales IG, publicación) queda del lado
 
 ### Fase 4 — Despliegue en el VPS con Dokploy
 > Dokploy usa **Traefik** como reverse proxy con TLS/Let's Encrypt automático y gestiona dominios, red y entorno. No añadimos proxy propio ni gestionamos certificados a mano.
-- [ ] Añadir un `Dockerfile` al fork (app Node: Hono + better-sqlite3, Node 20+) y desplegar como **Application** en Dokploy (build por Dockerfile). **No** usar el `wrangler.toml` del repo: ese es el target de Cloudflare Workers y no aplica aquí (better-sqlite3 no corre en Workers).
+- [x] Añadir un `Dockerfile` para Node + Hono + `node:sqlite` y desplegar como **Application** en Dokploy (build por Dockerfile). El runtime requiere Node 22.5 o superior; se usa Node 24.
 - [ ] **Variables de entorno**: definirlas en el **editor de Environment de Dokploy** (no crear `.env` a mano; Dokploy lo gestiona): `TWENTY_API_URL`, `TWENTY_TOKEN`, `N8N_WEBHOOK_URL`, `EDITOR_SHARED_SECRET`, `LOGO_PATH`.
 - [ ] **Volúmenes/mounts** en Dokploy para `data.db` y `uploads/` (si no, se pierden en cada redeploy).
 - [ ] **Acceso del operador**: asignar dominio en Dokploy (Traefik + TLS) **pero protegido** con middleware Traefik de auth (basic auth para empezar; forward-auth/SSO como Authelia/Authentik más adelante) y, si hay IPs fijas, middleware de allowlist. Alternativa: sin dominio público y acceso solo por VPN (Tailscale/WireGuard). La auth propia de la API (`EDITOR_SHARED_SECRET`) se mantiene **además** de esto.
@@ -145,7 +150,7 @@ Todo lo sensible (token de Twenty, credenciales IG, publicación) queda del lado
 ## 9. Ficheros a añadir en el fork
 - `CLAUDE.md` — contexto del proyecto y convenciones para Claude Code (este plan resumido + mapa del código).
 - `.env.example` — documentar las variables (`TWENTY_API_URL`, `TWENTY_TOKEN`, `N8N_WEBHOOK_URL`, `EDITOR_SHARED_SECRET`, `LOGO_PATH`, tamaños IG) **como referencia**; los valores reales van en el editor de Environment de Dokploy, no en un `.env` commiteado.
-- `Dockerfile` — app Node (Hono + better-sqlite3) para desplegar como Application en Dokploy. (El `wrangler.toml` del repo no se usa en este despliegue.)
+- `Dockerfile` — app Node (Hono + `node:sqlite`) para desplegar como Application en Dokploy. El `wrangler.toml` no forma parte del despliegue.
 
 ## 10. Prompt de arranque para la primera sesión de Claude Code
 
